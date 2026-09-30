@@ -1,0 +1,17 @@
+# yours, never committed: keys, your config, your data
+.env
+config/
+data/
+archive/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# local tools
+.claude/
+.DS_Store

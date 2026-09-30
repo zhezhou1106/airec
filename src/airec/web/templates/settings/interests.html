@@ -1,0 +1,94 @@
+{% extends "settings/_layout.html" %}
+{% block settings %}
+<header class="settings-head">
+  <h1 class="display">Interests</h1>
+  <p class="lede">Your interest map decides what gets collected and how it is judged. The easiest way to
+    improve it is to hand it to the strongest model you use.</p>
+</header>
+
+{% if topics %}
+<section class="topic-chips" aria-label="Current topics">
+  {% for t in topics %}
+  <span class="chip pr-{{ t.priority or 'core' }}" title="{{ t.summary }}">{{ t.name }}<em>{{ t.priority or 'core' }}</em></span>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="card handoff">
+  <h2>Update it with a stronger model</h2>
+  <ol class="handoff-steps">
+    <li>
+      <div>
+        <p><strong>Copy the prompt.</strong> It holds your current map and the format the pipeline reads.</p>
+        <div class="editor-actions">
+          <button type="button" class="btn primary" data-copy="#copy-prompt">Copy prompt</button>
+          <details class="peek"><summary>See it</summary><pre class="prompt-text">{{ copy_prompt }}</pre></details>
+        </div>
+        <textarea id="copy-prompt" class="visually-hidden" readonly tabindex="-1" aria-hidden="true">{{ copy_prompt }}</textarea>
+      </div>
+    </li>
+    <li>
+      <p><strong>Paste it into Claude, ChatGPT or DeepSeek</strong>, write your interests where it says
+        <em>“Write here”</em>, and send. Turn on web search there if you can. Go back and forth until you like it.</p>
+    </li>
+    <li>
+      <form method="post" action="/settings/interests/paste" class="paste-form">
+        <label for="answer"><strong>Paste the whole answer here.</strong> The map is taken from its yaml block.</label>
+        {% if paste_errors %}
+        <div class="alert"><p>That answer is not a usable map yet:</p>
+          <ul>{% for e in paste_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+          <p>Ask the model to fix these, then paste again.</p></div>
+        {% endif %}
+        <textarea id="answer" name="answer" rows="6" class="code small-code" placeholder="```yaml&#10;about: …&#10;topics:&#10;  - id: …&#10;```">{{ paste or '' }}</textarea>
+        <div class="editor-actions"><button class="btn">Preview changes</button></div>
+      </form>
+    </li>
+  </ol>
+
+  {% if draft %}
+  <div class="draft" id="draft">
+    <h3>Preview</h3>
+    <p class="facts">
+      {% if draft.new_topics %}<span>New topics: <strong>{{ draft.new_topics | join(', ') }}</strong></span>{% endif %}
+      {% if draft.dropped_topics %}<span class="status-failed">Not in the answer: {{ draft.dropped_topics | join(', ') }}</span>{% endif %}
+      {% if not draft.new_topics and not draft.dropped_topics %}<span>Same topics, revised content</span>{% endif %}
+    </p>
+    {% if draft.changes %}<div class="changes">{{ draft.changes | md }}</div>{% endif %}
+
+    <div class="choices">
+      <details class="choice-card" open>
+        <summary><strong>Replace</strong> my map with the answer <span class="muted">— best when the prompt included your map, as it does</span></summary>
+        <div class="diff">{% for row in draft.replace %}<div class="dl dl-{{ row.kind }}">{{ row.text }}</div>{% else %}<div class="dl dl-ctx">No changes.</div>{% endfor %}</div>
+        <form method="post" action="/settings/interests/draft/apply"><input type="hidden" name="mode" value="replace"><button class="btn primary">Replace my map</button></form>
+      </details>
+      <details class="choice-card">
+        <summary><strong>Merge</strong> the answer into my map <span class="muted">— keeps all my topics and wording, adds new topics, combines queries</span></summary>
+        <div class="diff">{% for row in draft.merge %}<div class="dl dl-{{ row.kind }}">{{ row.text }}</div>{% else %}<div class="dl dl-ctx">No changes.</div>{% endfor %}</div>
+        <form method="post" action="/settings/interests/draft/apply"><input type="hidden" name="mode" value="merge"><button class="btn primary">Merge into my map</button></form>
+      </details>
+    </div>
+    <form method="post" action="/settings/interests/draft/discard"><button class="btn quiet">Discard this answer</button></form>
+  </div>
+  {% endif %}
+</section>
+
+<details class="card revise" {% if proposal %}open{% endif %}>
+  <summary><h2>Or let DeepSeek revise it here</h2></summary>
+  {% if proposal %}
+    {% include "settings/_proposal.html" %}
+  {% else %}
+  <form method="post" action="/settings/interests/revise" class="revise-form">
+    <label for="req">What should change?</label>
+    <textarea id="req" name="request" rows="3" placeholder="Add video generation models that could run on my Mac as a side topic."></textarea>
+    <div class="editor-actions">
+      <label class="choice toggle"><input type="checkbox" name="web" value="1" checked><span>Search the web first</span></label>
+      <button class="btn">Draft a revision</button>
+    </div>
+    <p class="hint">Uses the map editor model from Settings → Models. Nothing changes until you apply the draft.</p>
+  </form>
+  {% endif %}
+</details>
+
+<h2 class="section-title">Edit by hand</h2>
+{% include "settings/_editor.html" %}
+{% endblock %}

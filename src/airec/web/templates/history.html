@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}History · airec{% endblock %}
+{% block content %}
+<h1 class="display">History</h1>
+
+{% if not runs %}
+<p class="empty">No digests yet. <a href="/run">Make the first one</a>.</p>
+{% else %}
+<ul class="digests">
+  {% for r in runs %}
+  {% set row = r.row %}
+  <li class="digest-row {% if not r.digest %}unfinished{% endif %}">
+    {% if r.digest %}
+    <a href="/history/{{ row.id }}" class="digest-link">
+      <span class="d-date">{{ row.k_until | when('%a %b %-d') }}</span>
+      <span class="d-window">{{ r.digest.window }}</span>
+      <span class="d-counts">{{ r.digest.counts.notes }} notes · {{ r.digest.counts.mentions }} mentions{% if r.digest.news %} · news{% endif %}</span>
+      {% set tops = [] %}{% for s in r.digest.sections %}{% for n in s.notes %}{% if tops|length < 3 %}{% set _ = tops.append(n.title) %}{% endif %}{% endfor %}{% endfor %}
+      {% if tops %}<span class="d-preview">{{ tops | join(' · ') }}</span>{% endif %}
+    </a>
+    {% else %}
+    <a href="/jobs/{{ r.job }}" class="digest-link">
+      <span class="d-date">{{ row.started_at | when('%a %b %-d') }}</span>
+      <span class="d-window">Run {{ row.id }}</span>
+      <span class="d-counts status-{{ row.status }}">{{ row.status }}</span>
+    </a>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if others %}
+<h2 class="section-title">Other jobs</h2>
+<table class="table">
+  <thead><tr><th>Started</th><th>Job</th><th>Status</th><th>Took</th></tr></thead>
+  <tbody>
+  {% for j in others %}
+  <tr>
+    <td>{{ j.meta.started_at | when }}</td>
+    <td><a href="/jobs/{{ j.name }}">{{ {'backfill': 'Index backfill', 'deepread': 'Deep read', 'revise': 'Map revision'}.get(j.kind, j.kind) }}</a>
+      {% if j.meta.title %}<span class="muted">· {{ j.meta.title[:70] }}</span>{% endif %}</td>
+    <td class="status-{{ j.status }}">{{ j.status }}</td>
+    <td class="num">{{ j.elapsed }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,30 @@
+{# A YAML file editor with validation errors and version history. Needs: tab, text, errors, versions #}
+<form method="post" action="/settings/file/{{ tab }}" class="editor">
+  {% if errors %}
+  <div class="alert">
+    <p>Not saved. Fix these first:</p>
+    <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  <textarea name="text" spellcheck="false" class="code" rows="28" aria-label="{{ tab }}.yaml">{{ text }}</textarea>
+  <div class="editor-actions">
+    <button class="btn primary">Save {{ tab }}.yaml</button>
+    <span class="muted">Checked before it is written. The old version is kept below.</span>
+  </div>
+</form>
+
+{% if versions %}
+<details class="versions">
+  <summary>Earlier versions · {{ versions | length }}</summary>
+  <ul>
+    {% for v in versions %}
+    <li>
+      <span>{{ v.when.strftime('%b %-d, %H:%M') }}</span>
+      <span class="muted">{{ v.label.split('—', 1)[1] if '—' in v.label else '' }}</span>
+      <a href="/settings/file/{{ tab }}/version/{{ v.stamp }}" target="_blank">View</a>
+      <form method="post" action="/settings/file/{{ tab }}/restore/{{ v.stamp }}"><button class="link">Restore</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}airec{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="page-{{ nav }}">
+  <header class="bar">
+    <div class="bar-inner">
+      <a class="mark" href="/run">air<span>ec</span></a>
+      <nav class="tabs" aria-label="Main">
+        <a href="/run" {% if nav == 'run' %}aria-current="page"{% endif %}>Run</a>
+        <a href="/history" {% if nav == 'history' %}aria-current="page"{% endif %}>History</a>
+        <a href="/settings" {% if nav == 'settings' %}aria-current="page"{% endif %}>Settings</a>
+      </nav>
+      <div id="pill" hx-get="/pill" hx-trigger="every 5s" hx-swap="innerHTML">
+        {% include "_pill.html" %}
+      </div>
+    </div>
+  </header>
+  <main class="{% block main_class %}wrap{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

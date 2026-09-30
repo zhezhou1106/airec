@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Settings · airec{% endblock %}
+{% block content %}
+<div class="settings">
+  <nav class="subtabs" aria-label="Settings">
+    {% for id, label in tabs %}
+    <a href="/settings/{{ id }}" {% if tab == id %}aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  <div class="settings-body">
+    {% if saved %}<p class="notice">Saved. The next run uses it.</p>{% endif %}
+    {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+    {% block settings %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

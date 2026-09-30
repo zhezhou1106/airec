@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.name }} · airec{% endblock %}
+{% block content %}
+<p class="eyebrow"><a href="/history">History</a> / {{ job.name }}</p>
+{% include "_job_panel.html" %}
+
+<section class="card">
+  <h2>Model calls</h2>
+  {% if not calls %}<p class="muted">No model calls recorded.</p>{% endif %}
+  {% for phase, rows in calls.items() %}
+  <details class="calls">
+    <summary><strong>{{ phase }}</strong> · {{ rows | length }} calls
+      {% set errs = rows | selectattr('error', 'defined') | list | length %}{% if errs %}<span class="status-failed"> · {{ errs }} with errors</span>{% endif %}</summary>
+    {% for r in rows %}
+    <details class="call">
+      <summary>
+        <span class="num">{{ r.latency_s }} s</span>
+        <span>{{ r.model }}</span>
+        {% if r.usage %}<span class="muted">{{ r.usage.prompt_tokens }} → {{ r.usage.completion_tokens }} tokens</span>{% endif %}
+        {% if r.error %}<span class="status-failed">{{ r.error[:120] }}</span>{% endif %}
+      </summary>
+      <div class="call-body">
+        <h4>System</h4><pre>{{ r.system }}</pre>
+        <h4>User</h4><pre>{{ r.user }}</pre>
+        <h4>Reply</h4><pre>{{ r.response }}</pre>
+      </div>
+    </details>
+    {% endfor %}
+  </details>
+  {% endfor %}
+</section>
+
+<section class="card">
+  <h2>Full log</h2>
+  <pre class="log tall">{{ full_log }}</pre>
+</section>
+{% endblock %}

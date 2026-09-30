@@ -1,0 +1,22 @@
+<div class="proposal" id="proposal"
+  {% if proposal.status in ('starting', 'running') %}hx-get="/settings/interests/proposal/{{ proposal.name }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <p class="req"><span class="muted">You asked:</span> {{ proposal.request }}</p>
+  {% if proposal.status in ('starting', 'running') %}
+    <p class="muted">Drafting…</p>
+    <pre class="log small">{{ proposal.log }}</pre>
+  {% elif proposal.ready %}
+    {% if proposal.changes %}<div class="changes">{{ proposal.changes | md }}</div>{% endif %}
+    {% if proposal.diff %}
+    <div class="diff" role="table" aria-label="Changes to interests.yaml">
+      {% for row in proposal.diff %}<div class="dl dl-{{ row.kind }}">{{ row.text }}</div>{% endfor %}
+    </div>
+    {% else %}<p class="muted">The draft is the same as the current map.</p>{% endif %}
+    <div class="editor-actions">
+      <form method="post" action="/settings/interests/proposal/{{ proposal.name }}/apply"><button class="btn primary">Apply this revision</button></form>
+      <form method="post" action="/settings/interests/proposal/{{ proposal.name }}/discard"><button class="btn quiet">Discard</button></form>
+    </div>
+  {% else %}
+    <p class="alert">The draft failed{% if proposal.error %}: {{ proposal.error }}{% endif %}. <a href="/jobs/{{ proposal.name }}">See the log</a>.</p>
+    <form method="post" action="/settings/interests/proposal/{{ proposal.name }}/discard"><button class="btn quiet">Dismiss</button></form>
+  {% endif %}
+</div>

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Run · airec{% endblock %}
+{% block content %}
+<div class="run-grid">
+  <div class="run-main">
+    {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+    {% if job and job.live %}{% include "_job_panel.html" %}{% endif %}
+
+    <section class="card start">
+      <h1 class="display">Make a digest</h1>
+      <form method="post" action="/run/start" class="start-form">
+        <fieldset class="window">
+          <legend>Papers, posts and repos from</legend>
+          <label class="choice">
+            <input type="radio" name="window" value="since" checked>
+            <span>
+              {% if last_until %}Since the last digest <span class="muted">({{ last_until | when }})</span>
+              {% else %}The last {{ first_days }} days <span class="muted">(first digest)</span>{% endif %}
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="window" value="days">
+            <span>The last <input type="number" name="days" value="7" min="1" max="365" step="1" class="inline-num" aria-label="days"> days</span>
+          </label>
+        </fieldset>
+        <label class="choice toggle">
+          <input type="checkbox" name="news" value="1" {% if news_default %}checked{% endif %}>
+          <span>Include news
+            <span class="muted">— {% if news_until %}since {{ news_until | when }}, {% endif %}at most {{ news_days }} days</span>
+          </span>
+        </label>
+        <div class="start-actions">
+          <button class="btn primary" {% if active_job %}disabled{% endif %}>Start run</button>
+          {% if resumable %}
+          <button class="btn" formaction="/run/resume/{{ resumable.id }}">Resume run {{ resumable.id }}
+            <span class="muted">({{ resumable.status }})</span></button>
+          {% endif %}
+        </div>
+      </form>
+    </section>
+
+    {% if job and not job.live %}{% include "_job_panel.html" %}{% endif %}
+  </div>
+
+  <aside class="run-side">
+    <section class="card index">
+      <h2>Your index</h2>
+      <dl class="stats">
+        <div><dt>Papers, posts, repos</dt><dd>{{ "{:,}".format(stats['items']) }}</dd></div>
+        <div><dt>From the backfill</dt><dd>{{ "{:,}".format(stats['backfilled']) }}</dd></div>
+        <div><dt>Embedded</dt><dd>{{ "{:,}".format(stats['embedded']) }}</dd></div>
+        <div><dt>With a note</dt><dd>{{ "{:,}".format(stats['noted']) }}</dd></div>
+        <div><dt>News items</dt><dd>{{ "{:,}".format(stats['news']) }}</dd></div>
+        <div><dt>Database</dt><dd>{{ stats['db_mb'] }} MB</dd></div>
+      </dl>
+      <p class="hint">Older papers in the index are reconsidered each run, so a paper can reach you later
+        when your interests change.</p>
+      <form method="post" action="/run/backfill" class="backfill">
+        <label>Fill the last <input type="number" name="months" value="{{ backfill_months }}" min="1" max="36" class="inline-num" aria-label="months"> months of arXiv</label>
+        <button class="btn" {% if active_job %}disabled{% endif %}>Backfill</button>
+      </form>
+      <p class="hint">Metadata and embeddings only, about 1 GB a year. Safe to stop; it continues where it left off.</p>
+    </section>
+  </aside>
+</div>
+{% endblock %}

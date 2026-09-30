@@ -1,0 +1,28 @@
+{% extends "settings/_layout.html" %}
+{% block settings %}
+<header class="settings-head">
+  <h1 class="display">Models</h1>
+  <p class="lede">Each phase can run on its own model. Define a provider once, then point phases at it.</p>
+</header>
+
+<section class="card">
+  <h2>Phases</h2>
+  <dl class="phase-doc">
+    <div><dt>triage</dt><dd>keep or drop, from title and summary, in large batches</dd></div>
+    <div><dt>score</dt><dd>0–10 with a one-line reason</dd></div>
+    <div><dt>note</dt><dd>the four-paragraph reader's note for each selected item</dd></div>
+    <div><dt>mention</dt><dd>one sentence for each item below the notes</dd></div>
+    <div><dt>article</dt><dd>the plain-language article on top of the digest</dd></div>
+    <div><dt>news</dt><dd>the news section, when news is on</dd></div>
+    <div><dt>deep_read</dt><dd>the long reading you start from a note</dd></div>
+    <div><dt>map_editor</dt><dd>revises your interest map on request</dd></div>
+  </dl>
+  <div hx-target="#model-test" class="editor-actions">
+    <button class="btn" hx-post="/settings/models/test" hx-target="#model-test" hx-indicator="#model-test">Test every model</button>
+    <span class="muted">Sends a one-word request to each.</span>
+  </div>
+  <div id="model-test"></div>
+</section>
+
+{% include "settings/_editor.html" %}
+{% endblock %}

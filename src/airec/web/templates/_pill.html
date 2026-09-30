@@ -1,0 +1,3 @@
+{% if active_job %}
+<a class="pill live" href="/run"><span class="dot"></span>{{ {'run': 'Digest running', 'backfill': 'Backfill running', 'deepread': 'Deep read running', 'revise': 'Revising map'}.get(active_job.kind, 'Job running') }}</a>
+{% endif %}

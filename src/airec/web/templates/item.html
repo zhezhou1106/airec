@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title[:60] }} · airec{% endblock %}
+{% block main_class %}wrap reading{% endblock %}
+{% block content %}
+<header class="digest-head">
+  <p class="eyebrow"><a href="/history">History</a> / {{ item.kind }}</p>
+  <h1 class="display item-title"><a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title }}</a></h1>
+  <p class="digest-sub">{{ item.published_at | when('%b %-d, %Y') }} · {{ item.source }}{% if item.authors %} · {{ item.authors[:160] }}{% endif %}</p>
+  {% if shown %}<p class="digest-sub">Shown in
+    {% for s in shown %}<a href="/history/{{ s.run_id }}">run {{ s.run_id }}</a> ({{ s.tier }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+</header>
+
+{% if error %}<p class="alert">{{ error }}</p>{% endif %}
+
+{% if item.note %}
+<section class="note-solo">
+  <h2 class="kicker">Reader's note</h2>
+  <div class="note-text">{{ item.note | md }}</div>
+</section>
+{% elif item.oneliner %}
+<p class="lede">{{ item.oneliner }}</p>
+{% endif %}
+
+<section class="deep">
+  <h2 class="kicker">Deep read</h2>
+  {% if running and running.live %}
+  <div hx-get="/item/{{ item.id }}?job={{ running.name }}" hx-trigger="every 3s" hx-select=".deep" hx-target=".deep" hx-swap="outerHTML">
+    <p class="muted">Reading with {{ deep_model }}… {{ running.elapsed }}</p>
+    <pre class="log small">{{ running.log[-1200:] }}</pre>
+  </div>
+  {% elif deep %}
+  <div class="deep-text">{{ deep | md }}</div>
+  {% else %}
+  {% if running and running.status in ('failed', 'died') %}<p class="alert">{{ running.error or 'The deep read failed.' }} <a href="/jobs/{{ running.name }}">See the log</a>.</p>{% endif %}
+  <p class="muted">A long reading with {{ deep_model or 'the deep_read model' }}: how it works in detail, evidence, caveats, how to try it.</p>
+  <form method="post" action="/deep-read/{{ item.id }}"><button class="btn primary" {% if active_job %}disabled{% endif %}>Start deep read</button></form>
+  {% endif %}
+</section>
+
+<details class="abstract">
+  <summary>Abstract</summary>
+  <p>{{ item.abstract }}</p>
+</details>
+{% endblock %}

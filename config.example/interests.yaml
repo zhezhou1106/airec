@@ -1,0 +1,88 @@
+# Your interest map. It decides what gets collected and how it is judged.
+# This is a starter map for an ML researcher: replace it with your own.
+# The easiest way: Settings → Interests → "Copy prompt", paste it into a strong model,
+# describe your interests, and paste the answer back. Schema: src/airec/interests.py
+
+about: >
+  A machine-learning researcher interested in how language models are trained and
+  improved after pretraining. Reads to understand ideas and to implement them. Values
+  simple methods that scale, open recipes and released code, clear ablations and honest
+  negative results.
+
+topics:
+  - id: post-training-rl
+    name: Post-training and RL for reasoning
+    priority: core
+    summary: >
+      How language models are improved after pretraining: RL with verifiable rewards,
+      policy optimization, preference learning, reward models, distillation and synthetic
+      data. New algorithms and simplifications matter more than benchmark gains.
+    include:
+      - GRPO and its successors, RL with verifiable rewards, open training recipes
+      - preference optimization, reward models, process reward models
+      - SFT, distillation, on-policy distillation, synthetic data
+    exclude:
+      - prompt-engineering tricks with no training component
+    queries:
+      arxiv: [reinforcement learning with verifiable rewards, GRPO, preference optimization,
+              process reward model, on-policy distillation]
+      github: ["topic:rlhf", "rl llm training framework"]
+      web: [new open recipe for reasoning RL]
+      hackernews: [reinforcement learning]
+    watch:
+      repos: [huggingface/trl, volcengine/verl]
+
+  - id: continual-learning
+    name: Continual learning and self-improvement
+    priority: core
+    summary: >
+      Models and systems that keep improving after deployment, in their weights or in
+      their context: continual fine-tuning without forgetting, test-time training,
+      experience memory and self-evolving agents.
+    include:
+      - continual fine-tuning of LLMs, catastrophic forgetting
+      - test-time training and adaptation
+      - agent memory and self-improving agents
+    exclude:
+      - class-incremental image benchmarks (Split-CIFAR and similar)
+    queries:
+      arxiv: [continual learning language model, catastrophic forgetting fine-tuning,
+              test-time training, self-evolving agent, agent memory]
+      github: ["topic:continual-learning", "llm agent memory"]
+
+  - id: architectures
+    name: Architectures and efficiency
+    priority: side
+    summary: >
+      New model architectures and ways to run models cheaply: attention variants,
+      state-space and hybrid models, mixture-of-experts, quantization, fast inference.
+    queries:
+      arxiv: [linear attention, state space model, mixture of experts, speculative decoding,
+              quantization LLM]
+      github: ["topic:llm-inference"]
+    watch:
+      repos: [vllm-project/vllm, ggml-org/llama.cpp]
+
+  - id: agents
+    name: Agent paradigms
+    priority: side
+    summary: >
+      How LLM agents are built and trained: tool use, planning, harness and context
+      engineering, agentic RL.
+    queries:
+      arxiv: [agentic reinforcement learning, tool use language model, coding agent]
+      github: ["llm agent framework"]
+      hackernews: [AI agent]
+
+  - id: generative-media
+    name: Open generative media models
+    priority: explore
+    summary: >
+      Open image, video and audio generation models, and the training ideas behind them.
+    queries:
+      arxiv: [video generation, diffusion distillation, flow matching]
+      web: [new open-weight video generation model]
+
+exclude_everywhere:
+  - funding rounds, hiring and company news
+  - surveys, unless they define a genuinely new taxonomy

@@ -1,0 +1,31 @@
+# Which model runs each phase. Providers are defined once; phases pick one.
+# API keys live in .env (Settings → Keys), named by api_key_env.
+
+providers:
+  local:
+    base_url: http://localhost:1234/v1    # LM Studio (Ollama: http://localhost:11434/v1)
+    local: true                           # sends "no thinking" hints that local reasoning models (e.g. Qwen) honor
+    timeout: 300
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    timeout: 300
+
+embedding:
+  base_url: http://127.0.0.1:8081/v1      # llama.cpp, started on demand by scripts/embed-server.sh
+  model: qwen3-embedding-0.6b
+  autostart: true
+  batch: 32
+
+phases:
+  # Use model names your server lists (Settings → Models → Test every model shows problems).
+  # Bulk phases (triage, score, note, mention) suit a fast local model; the article, news,
+  # deep reads and map editor benefit most from a strong one.
+  triage:     {provider: local, model: qwen/qwen3.6-35b-a3b, temperature: 0.1}
+  score:      {provider: local, model: qwen/qwen3.6-35b-a3b, temperature: 0.1}
+  note:       {provider: local, model: qwen/qwen3.6-35b-a3b, temperature: 0.3}
+  mention:    {provider: local, model: qwen/qwen3.6-35b-a3b, temperature: 0.2}
+  article:    {provider: deepseek, model: deepseek-chat, temperature: 0.5}
+  news:       {provider: deepseek, model: deepseek-chat, temperature: 0.3}
+  deep_read:  {provider: deepseek, model: deepseek-chat, temperature: 0.3, max_tokens: 8000}
+  map_editor: {provider: deepseek, model: deepseek-chat, temperature: 0.4, max_tokens: 8000}

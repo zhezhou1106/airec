@@ -1,0 +1,33 @@
+digest:
+  notes: 15                 # items that get a reader's note
+  mentions: 30              # items that get a one-line mention
+  min_score_note: 7.0
+  min_score_mention: 6.0
+  max_notes_per_topic: 4
+  explore_share: 0.2        # share of notes kept for items outside the map or 'explore' topics
+
+news:
+  enabled: false
+  max_days: 7               # never look back further than this for news
+  stories: 10
+
+run:
+  first_run_days: 7         # the very first run looks back this far
+  triage_batch: 25
+  score_batch: 8
+  triage_max: 3000          # most items triaged per run; the rest carry over to the next run
+  resurface: 40             # older index papers reconsidered each run
+  read_chars: 14000         # source text a note is written from
+
+output:
+  obsidian_dir: ""          # also save each digest here, e.g. ~/Documents/Vault/Digests
+
+index:
+  backfill_months: 12
+
+search:                     # web search backends, tried in order; one that fails is skipped
+  order: [tavily, brave, duckduckgo]   # duckduckgo needs no key but may rate-limit
+
+device:                     # used only for the "fits your machine" tag on model releases
+  name: ""                  # e.g. MacBook Pro
+  memory_gb: 0              # e.g. 64; 0 turns the tag off

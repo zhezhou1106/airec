@@ -1,0 +1,79 @@
+# Where to look. Topic-specific searches and watched repos live in interests.yaml;
+# this file holds each source's switches and general settings.
+
+# ---- knowledge track: papers, posts, repos ----
+
+arxiv:
+  enabled: true
+  categories: [cs.LG, cs.CL, cs.AI]   # swept in full, no keyword filter
+  sweep: oai                          # oai = arXiv's bulk interface (no rate limit); api = search API
+  max_items: 5000
+  topic_search: false                 # topic searches run on Semantic Scholar below
+  per_query: 40
+
+semantic_scholar:
+  enabled: true                       # one search per topic, using each topic's arxiv queries;
+  per_topic: 200                      # also finds conference and journal papers, with citation counts
+
+hf_papers:
+  enabled: true
+  min_upvotes: 1
+
+github:
+  enabled: true
+  min_stars: 50
+  max_age_days: 90                    # only repos created recently; older ones come via watched releases
+  new_repo_min_stars: 150             # also: any repo created in the window with this many stars
+  per_query: 20
+  queries: []                         # added to each topic's github queries
+
+feeds:
+  enabled: true
+  list:
+    # research blogs, judged like papers
+    - {name: Interconnects, url: "https://www.interconnects.ai/feed", track: knowledge}
+    - {name: Ahead of AI, url: "https://magazine.sebastianraschka.com/feed", track: knowledge}
+    - {name: Lil'Log, url: "https://lilianweng.github.io/index.xml", track: knowledge}
+    - {name: BAIR blog, url: "https://bair.berkeley.edu/blog/feed.xml", track: knowledge}
+    - {name: CMU ML blog, url: "https://blog.ml.cmu.edu/feed/", track: knowledge}
+    - {name: Hugging Face blog, url: "https://huggingface.co/blog/feed.xml", track: knowledge}
+    # announcements and newsletters, used by the news section
+    - {name: Qwen, url: "https://qwenlm.github.io/blog/index.xml", track: news}
+    - {name: Google Research, url: "https://research.google/blog/rss/", track: news}
+    - {name: Google DeepMind, url: "https://deepmind.google/blog/rss.xml", track: news}
+    - {name: OpenAI, url: "https://openai.com/news/rss.xml", track: news}
+    - {name: Simon Willison, url: "https://simonwillison.net/atom/everything/", track: news}
+    - {name: Latent Space, url: "https://www.latent.space/feed", track: news}
+    - {name: Import AI, url: "https://importai.substack.com/feed", track: news}
+
+# ---- news track (only used when news is on in Settings → Digest) ----
+
+hf_models:
+  enabled: true
+  limit: 200                          # trending models checked; only ones created in the window count
+  min_likes: 20
+  skip_derivatives: true              # skip other people's fine-tunes, quantizations and LoRAs
+
+github_releases:
+  enabled: true
+  watch: []                           # added to each topic's watch.repos
+
+hackernews:
+  enabled: true
+  min_points: 80
+  queries: [LLM, open model, AI model release]
+
+reddit:
+  enabled: true
+  subreddits: [LocalLLaMA, MachineLearning]
+  per_sub: 25
+
+web_news:
+  enabled: true                       # needs TAVILY_API_KEY
+  max_queries: 20
+  per_query: 6
+  skip_domains: [medium.com, facebook.com, linkedin.com, x.com, twitter.com, youtube.com,
+                 reddit.com, quora.com, briefflash.com]   # reposts and commentary; papers are always skipped
+  queries:
+    - new open-weight language model release
+    - AI lab announces new model

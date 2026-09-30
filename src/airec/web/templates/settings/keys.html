@@ -1,0 +1,27 @@
+{% extends "settings/_layout.html" %}
+{% block settings %}
+<header class="settings-head">
+  <h1 class="display">Keys</h1>
+  <p class="lede">Stored in <code>.env</code> on this machine. Values are never shown again after saving.</p>
+</header>
+
+<ul class="keys">
+  {% for k in keys %}
+  <li class="key-row">
+    <div class="key-name">
+      <code>{{ k.key }}</code>
+      <span class="muted">{{ k.use }}</span>
+    </div>
+    <span class="key-state {{ 'set' if k.masked else 'unset' }}">{{ k.masked or 'not set' }}</span>
+    <form method="post" action="/settings/keys" class="key-form">
+      <input type="hidden" name="key" value="{{ k.key }}">
+      <input type="password" name="value" placeholder="{{ 'Replace' if k.masked else 'Paste the key' }}" autocomplete="off" aria-label="{{ k.key }}">
+      <button class="btn">Save</button>
+    </form>
+    {% if k.masked %}
+    <form method="post" action="/settings/keys"><input type="hidden" name="key" value="{{ k.key }}"><input type="hidden" name="value" value=""><button class="link">Remove</button></form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endblock %}

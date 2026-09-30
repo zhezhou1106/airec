@@ -1,0 +1,133 @@
+{% macro n(v) %}{{ "{:,}".format(v) if v is number else v }}{% endmacro %}
+{% macro bars(d) %}
+{% set top = (d.values() | max) if d else 1 %}
+<ul class="bars">
+  {% for k, v in d.items() %}
+  <li><span class="bar-label">{{ k }}</span><span class="bar-track"><span style="width: {{ (100 * v / (top or 1)) | round | int }}%"></span></span><span class="num">{{ n(v) }}</span></li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
+<section class="job" id="job-panel"
+  {% if job.live %}hx-get="/jobs/{{ job.name }}/panel" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <header class="job-head">
+    <div>
+      <p class="eyebrow">{{ {'run': 'Digest', 'backfill': 'Index backfill', 'deepread': 'Deep read', 'revise': 'Map revision'}.get(job.kind, job.kind) }}{% if job.window.run_id %} · run {{ job.window.run_id }}{% if job.window.resumed %} (resumed){% endif %}{% endif %} · started {{ job.meta.started_at | when }}</p>
+      <h2 class="job-status status-{{ job.status }}">
+        {{ {'starting': 'Starting', 'running': 'Running', 'done': 'Finished', 'failed': 'Failed', 'cancelled': 'Cancelled', 'died': 'Stopped unexpectedly'}.get(job.status, job.status) }}
+        <span class="muted">{{ job.elapsed }}</span>
+      </h2>
+    </div>
+    <div class="job-actions">
+      {% if job.live %}
+      <form method="post" action="/jobs/{{ job.name }}/cancel"><button class="btn quiet">Cancel</button></form>
+      {% endif %}
+      <a class="btn quiet" href="/jobs/{{ job.name }}">Log and model calls</a>
+      {% if job.kind == 'run' and job.status == 'done' and job.meta.run_id %}
+      <a class="btn primary" href="/history/{{ job.meta.run_id }}">Read the digest</a>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if job.window %}
+  <dl class="window-facts">
+    <div><dt>Papers, posts, repos</dt><dd>{{ job.window.k_since | when }} → {{ job.window.k_until | when }}</dd></div>
+    <div><dt>News</dt><dd>{% if job.window.news %}{{ job.window.n_since | when }} → {{ job.window.n_until | when }}{% else %}off{% endif %}</dd></div>
+    <div><dt>Interest map</dt><dd>{{ job.window.topics }} topics · version <code>{{ job.window.map_hash }}</code></dd></div>
+    {% if job.usage.calls %}<div><dt>Model calls</dt><dd>{{ n(job.usage.calls) }} · {{ n(job.usage.tokens_in) }} → {{ n(job.usage.tokens_out) }} tokens{% if job.usage.errors %} · <span class="status-failed">{{ job.usage.errors }} errors</span>{% endif %}</dd></div>{% endif %}
+  </dl>
+  {% endif %}
+
+  {% if job.live and job.current %}<p class="now"><span class="dot"></span>{{ job.current }}</p>{% endif %}
+  {% if job.error %}<p class="alert">{{ job.error }}</p>{% endif %}
+
+  <div class="phases">
+    {% for p in job.phases %}
+    {% set i = p.info %}
+    <details class="phase ph-{{ p.status }}" id="ph-{{ job.name }}-{{ p.id }}" {% if p.status == 'running' %}open{% endif %}>
+      <summary>
+        <span class="ph-mark" aria-hidden="true"></span>
+        <span class="ph-label">{{ p.label }}</span>
+        <span class="ph-detail">{{ p.detail }}</span>
+        <span class="ph-time">{% if p.eta %}~{{ p.eta }} left · {% endif %}{{ p.duration }}</span>
+        {% if p.pct is not none and p.status == 'running' %}<span class="ph-bar"><span style="width: {{ p.pct }}%"></span></span>{% endif %}
+      </summary>
+      <div class="ph-body">
+        {% if p.usage %}
+        <p class="ph-usage"><code>{{ p.usage.models | join(', ') }}</code> · {{ n(p.usage.calls) }} calls · {{ n(p.usage.tokens_in) }} → {{ n(p.usage.tokens_out) }} tokens · {{ p.usage.avg }} s per call{% if p.usage.errors %} · <span class="status-failed">{{ p.usage.errors }} errors</span>{% endif %}</p>
+        {% elif i.model %}<p class="ph-usage"><code>{{ i.model }}</code></p>{% endif %}
+
+        {% if p.id == 'check' and i.models %}
+        <table class="table compact"><tbody>
+          {% for m in i.models %}<tr><td><code>{{ m.model }}</code></td><td class="muted">{{ m.provider }}</td>
+            <td class="{{ 'status-failed' if m.error else 'status-done' }}">{{ m.error or ('ok' if m.provider == 'embedding' else m.latency ~ ' s') }}</td></tr>{% endfor %}
+        </tbody></table>
+        {% endif %}
+
+        {% if p.id in ('collect', 'news') %}
+          {% if p.sources %}
+          <table class="table compact"><thead><tr><th>Source</th><th class="num">Items</th></tr></thead><tbody>
+            {% for s in p.sources %}<tr class="{% if s.error %}src-err{% endif %}"><td>{{ s.name }}</td>
+              <td class="num">{% if s.error %}<span title="{{ s.error }}">failed</span>{% elif s.count is defined %}{{ n(s.count) }}{% else %}fetching…{% endif %}</td></tr>{% endfor %}
+          </tbody></table>
+          {% endif %}
+          <p class="facts">
+            {% if i['items'] is defined %}<span>{{ n(i['items']) }} after merging duplicates</span><span>{{ n(i.new) }} new to the index</span>{% endif %}
+            {% if i.backlog %}<span>{{ n(i.backlog) }} carried over from earlier runs</span>{% endif %}
+            {% if i.resurfaced is defined %}<span>{{ i.resurfaced }} older papers from the index</span>{% endif %}
+            {% if i.embedded %}<span>embedded {{ i.embedded }}</span>{% endif %}
+            {% if i.candidates is defined %}<span>{{ i.candidates }} candidate stories</span><span>{{ i.cited }} used in {{ i.bullets }} bullets</span>{% endif %}
+          </p>
+        {% endif %}
+
+        {% if p.id == 'triage' %}
+          <p class="facts">
+            {% if i.cached is defined %}<span>{{ n(i.cached) }} already triaged</span><span>{{ n(i.todo) }} to do</span>{% endif %}
+            {% if i.skipped %}<span class="status-failed">{{ n(i.skipped) }} over the triage limit, carried over to the next run</span>{% endif %}
+            {% if p.status == 'running' and p.total %}<span>{{ n(p.done) }} done</span>{% endif %}
+            {% if i.kept is defined %}<span>kept {{ n(i.kept) }}</span><span>dropped {{ n(i.dropped) }}</span>{% endif %}
+          </p>
+          {% if i.by_topic %}<h4>Kept, by topic</h4>{{ bars(i.by_topic) }}{% endif %}
+        {% endif %}
+
+        {% if p.id == 'score' %}
+          <p class="facts">
+            {% if i.cached is defined %}<span>{{ n(i.cached) }} already scored</span><span>{{ n(i.todo) }} to score</span>{% endif %}
+            {% if p.status == 'running' and p.total %}<span>{{ n(p.done) }} done</span>{% endif %}
+          </p>
+          {% if i.bands %}<h4>Scores</h4>{{ bars(i.bands) }}{% endif %}
+          {% if i.top %}<h4>Highest so far</h4>
+          <ol class="top">{% for t in i.top %}<li><span class="score">{{ '%.1f' | format(t.score) }}</span> <span>{{ t.title }}</span><span class="muted">{{ t.reason }}</span></li>{% endfor %}</ol>{% endif %}
+        {% endif %}
+
+        {% if p.id == 'select' and i.notes is defined %}
+          <p class="facts"><span>{{ i.eligible }} eligible</span><span>{{ i.mentions }} mentions</span>
+            {% if i.repeats_held_back %}<span>{{ i.repeats_held_back }} shown before, held back</span>{% endif %}</p>
+          <ol class="top">{% for t in i.notes %}<li><span class="score">{{ '%.1f' | format(t.score) }}</span> <span>{{ t.title }}</span><span class="muted">{{ t.topic }}{% if t.back %} · {{ t.back }}{% endif %}</span></li>{% endfor %}</ol>
+        {% endif %}
+
+        {% if p.id == 'read' %}
+          {% if p.status == 'running' and i.current %}<p class="facts"><span>Writing note {{ (p.done or 0) + 1 }} of {{ p.total }}:</span></p><p class="reading-now">{{ i.current }}</p>{% endif %}
+          {% if p.status == 'done' %}<p class="facts"><span>{{ i.count }} notes and the one-line mentions written</span></p>{% endif %}
+        {% endif %}
+
+        {% if p.id == 'write' and i.paths %}
+          <p class="facts"><span>{{ i.notes }} notes · {{ i.mentions }} mentions</span></p>
+          <ul class="paths">{% for path in i.paths %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+        {% endif %}
+
+        {% if p.id not in ('check', 'collect', 'news', 'triage', 'score', 'select', 'read', 'write') and i %}
+          <p class="facts">{% for k, v in i.items() %}{% if k not in ('model',) %}<span>{{ k }}: {{ v }}</span>{% endif %}{% endfor %}</p>
+        {% endif %}
+
+        {% if p.status == 'waiting' %}<p class="muted">Not started yet.</p>{% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+
+  <details class="log-box" id="log-{{ job.name }}" {% if job.live or job.status in ('failed', 'died') %}open{% endif %}>
+    <summary>Log</summary>
+    <pre class="log" data-autoscroll>{{ job.log }}</pre>
+  </details>
+</section>

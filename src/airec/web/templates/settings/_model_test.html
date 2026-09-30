@@ -1,0 +1,8 @@
+<table class="table">
+  <thead><tr><th>Phase</th><th>Model</th><th>Result</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr><td>{{ r.phase }}</td><td>{{ r.model }}</td><td class="{{ 'status-done' if r.ok else 'status-failed' }}">{{ r.result }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

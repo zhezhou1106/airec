@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Digest {{ d.date }} · airec{% endblock %}
+{% block main_class %}wrap reading{% endblock %}
+{% block content %}
+<header class="digest-head">
+  <p class="eyebrow"><a href="/history">History</a> / Run {{ run.id }}</p>
+  <h1 class="display">{{ run.k_until | when('%A, %B %-d') }}</h1>
+  <p class="digest-sub">{{ d.window }} · {{ d.counts.notes }} notes · {{ d.counts.mentions }} more mentioned</p>
+  <nav class="digest-links">
+    <a href="/jobs/{{ job_name }}">Log and model calls</a>
+    <a href="/history/{{ run.id }}/markdown">Markdown</a>
+  </nav>
+</header>
+
+{% if d.news %}
+<section class="news">
+  <h2 class="kicker">News <span>{{ d.news.window }}</span></h2>
+  <div class="news-body">{{ d.news.markdown | md }}</div>
+</section>
+{% endif %}
+
+{% if d.article %}
+<article class="article" id="article" data-cites='{{ cites_json }}'>
+  {{ d.article | md | cites }}
+</article>
+{% elif not d.sections %}
+<p class="empty">Nothing cleared the bar for a note this time.{% if d.mentions %} The mentions below came close.{% endif %}</p>
+{% endif %}
+
+{% if d.sections %}
+<section class="notes">
+  <h2 class="kicker">Notes</h2>
+  {% for s in d.sections %}
+  <section class="topic">
+    <h3 class="topic-name">{{ s.name }}</h3>
+    {% for r in s.notes %}
+    <article class="note" id="ref-{{ r.n }}">
+      <div class="note-num">{{ r.n }}</div>
+      <div class="note-body">
+        <h4 class="note-title"><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a></h4>
+        <p class="note-meta">
+          <span>{{ r.published }}</span>
+          <span>{{ {'arxiv': 'arXiv', 'hf_papers': 'HF papers', 'github': 'GitHub'}.get(r.source, r.source.replace('feed:', '')) }}</span>
+          <span class="score" title="Score out of 10">{{ '%.1f' | format(r.score) }}</span>
+          {% for t in r.tags %}<span class="tag">{{ t }}</span>{% endfor %}
+        </p>
+        {% if r.back %}<p class="back">Back again: {{ r.back }}</p>
+        {% elif r.resurfaced %}<p class="back">From your index</p>{% endif %}
+        <div class="note-text">{{ r.note | md }}</div>
+        <div class="note-actions">
+          {% if deep.get(r.id) %}
+          <a class="btn small" href="/item/{{ r.id }}">Read the deep read</a>
+          {% else %}
+          <form method="post" action="/deep-read/{{ r.id }}"><button class="btn small quiet">Deep read</button></form>
+          {% endif %}
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if d.mentions %}
+<section class="mentions">
+  <h2 class="kicker">Also worth knowing</h2>
+  <ol class="mention-list">
+    {% for r in d.mentions %}
+    <li id="ref-{{ r.n }}">
+      <span class="m-num">{{ r.n }}</span>
+      <span class="m-body"><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a>
+        <span class="m-line">{{ r.oneliner }}</span>
+        <span class="m-topic">{{ r.topic_name }}{% if r.back %} · back: {{ r.back }}{% endif %}</span></span>
+      <a class="m-more" href="/item/{{ r.id }}" aria-label="Details for {{ r.title }}">›</a>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+{% endblock %}
