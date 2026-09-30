@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from airec.config import Config
-from airec.search import SearchError, WebSearch, _ddg_target
+from config import Config
+from search import SearchError, WebSearch, _ddg_target
 
 
 def backends(monkeypatch, calls, fail=()):

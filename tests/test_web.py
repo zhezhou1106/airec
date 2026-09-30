@@ -7,10 +7,10 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from airec.config import Config
-from airec.pipeline import RunOptions, run_digest
-from airec.runlog import RunContext, new_job_dir
-from airec.web.app import create_app
+from config import Config
+from pipeline import RunOptions, run_digest
+from runlog import RunContext, new_job_dir
+from web.app import create_app
 
 from conftest import paper
 

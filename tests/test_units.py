@@ -4,12 +4,12 @@ from __future__ import annotations
 import time
 from datetime import date
 
-from airec import device, interests
-from airec.phases.common import parse_lines
-from airec.sources.arxiv import month_ranges
-from airec.sources.base import canonical_id, merge
-from airec.store import Store
-from airec.web import envfile
+import device, interests
+from phases.common import parse_lines
+from sources.arxiv import month_ranges
+from sources.base import canonical_id, merge
+from store import Store
+from web import envfile
 
 
 def test_parse_lines_tolerates_decoration():

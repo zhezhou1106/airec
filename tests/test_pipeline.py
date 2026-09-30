@@ -6,10 +6,10 @@ import time
 
 import pytest
 
-from airec.config import Config
-from airec.pipeline import RunOptions, run_digest
-from airec.runlog import RunContext
-from airec.store import Store
+from config import Config
+from pipeline import RunOptions, run_digest
+from runlog import RunContext
+from store import Store
 
 from conftest import DAY, news_item, paper
 
@@ -158,7 +158,7 @@ def test_stale_running_rows_are_abandoned(world, cfg):
 def test_items_over_the_triage_limit_carry_over(world, cfg, home):
     import yaml
 
-    from airec.phases.common import Job
+    from phases.common import Job
     path = home / "config/settings.yaml"
     data = yaml.safe_load(path.read_text())
     data["run"]["triage_max"] = 5

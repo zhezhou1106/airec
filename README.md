@@ -123,7 +123,7 @@ rec status                               index size and recent runs
 ## Project layout
 
 ```
-src/airec/
+src/
   sources/     one file per source (arxiv, semantic_scholar, hf_papers, github, feeds,
                hf_models, community, web_news) behind a small Source interface
   phases/      one file per pipeline step (collect, embed, resurface, triage, score,
@@ -139,7 +139,7 @@ scripts/         embedding-server helper (llama.cpp)
 tests/           the whole pipeline and every page, offline
 ```
 
-**Adding a source:** write a `Source` subclass in `src/airec/sources/` with a `name`, a
+**Adding a source:** write a `Source` subclass in `src/sources/` with a `name`, a
 `track` (`knowledge` or `news`) and `fetch(since, until) -> list[item]`. Register it in
 `sources/__init__.py` and give it a section in `config/sources.yaml`.
 

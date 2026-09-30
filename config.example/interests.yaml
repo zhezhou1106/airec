@@ -1,7 +1,7 @@
 # Your interest map. It decides what gets collected and how it is judged.
 # This is a starter map for an ML researcher: replace it with your own.
 # The easiest way: Settings → Interests → "Copy prompt", paste it into a strong model,
-# describe your interests, and paste the answer back. Schema: src/airec/interests.py
+# describe your interests, and paste the answer back. Schema: src/interests.py
 
 about: >
   A machine-learning researcher interested in how language models are trained and

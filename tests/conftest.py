@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 import yaml
 
-from airec import llm, sources
-from airec.config import Config
-from airec.phases import read as read_phase
+import llm, sources
+from config import Config
+from phases import read as read_phase
 
 ROOT = Path(__file__).resolve().parents[1]
 DAY = 86400
