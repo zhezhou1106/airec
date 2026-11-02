@@ -19,7 +19,9 @@ report:
   first_window_days: 7
   max_window_days: 14       # after missed weeks, catch up this far at most
   copy_to: null             # also write each report here, e.g. ~/Documents/vault/AI Weekly
-  notify: true              # macOS notification when a report is ready
+  notify: true              # macOS notification; clicking it needs `brew install terminal-notifier`
+  link: null                # what the notification opens; null is the file itself, or a URL
+                            # with {path}, e.g. http://127.0.0.1:7777/#/app/airec/outputs/{path}
 
 schedule:
   weekday: 1                # ISO weekday; 1 is Monday

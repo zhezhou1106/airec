@@ -225,7 +225,7 @@ def generate(
 
     if settings.app.report.notify and not dry_run:
         note = f"{week} is ready" if status == "ok" else f"{week}: {failures} section(s) failed"
-        report.notify(title, note)
+        report.notify(title, note, report.report_link(path, paths.home, config.link))
     return RunResult(path, status, outcomes)
 
 

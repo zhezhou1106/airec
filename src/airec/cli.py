@@ -9,7 +9,7 @@ from typing import Annotated
 
 import typer
 
-from airec import pipeline, schedule
+from airec import pipeline, report, schedule
 from airec.config import ConfigError, Paths, Settings, init_home, load_settings
 from airec.sections import build_sections
 from airec.sections.base import Context, Section, Window
@@ -185,6 +185,18 @@ def schedule_uninstall() -> None:
 
 
 # ---- inspection ----
+
+
+@app.command("open")
+def open_report() -> None:
+    """Open the latest report."""
+    settings = _settings()
+    reports = sorted(settings.paths.reports.glob("*.md"))
+    if not reports:
+        typer.secho("No report yet. Run `rec run`.", fg="yellow", err=True)
+        raise typer.Exit(1)
+    home = settings.paths.home
+    report.open_link(report.report_link(reports[-1], home, settings.app.report.link))
 
 
 @app.command()

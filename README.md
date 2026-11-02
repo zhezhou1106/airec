@@ -31,7 +31,9 @@ rec schedule install   # from now on, weekly (macOS)
 ```
 
 Reports land in `~/.airec/reports/2026-W45.md`, plus any folder you set as `report.copy_to` (an
-Obsidian vault works well).
+Obsidian vault works well). `rec open` opens the latest one. A macOS notification announces each
+report; with `brew install terminal-notifier`, clicking it opens the report, or the URL you set as
+`report.link`.
 
 ## Tracking a direction
 
@@ -58,6 +60,7 @@ rec run                         generate this week's report
     --if-due                    run only if this week's report is owed (the scheduler uses this)
 rec direction add|list|test     manage paper directions
 rec schedule install|uninstall  turn the weekly run on or off (macOS)
+rec open                        open the latest report
 rec status                      schedule state and recent runs
 rec doctor                      check config, keys, models and sources
 ```

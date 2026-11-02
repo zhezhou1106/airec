@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from typer.testing import CliRunner
 
-from airec import cli, pipeline, schedule
+from airec import cli, pipeline, report, schedule
 from airec.config import ConfigError, Strict, load_settings
 from airec.sections import _REGISTRY, build_sections, register
 from airec.sections.base import Section, SectionResult, Window
@@ -326,6 +326,50 @@ def test_online_is_false_on_network_errors():
 
     assert not pipeline.online(down)
     assert pipeline.online(lambda: None)
+
+
+def test_link_uses_the_template_and_encodes_the_path(tmp_path):
+    path = tmp_path / "reports" / "2026-W45.md"
+    template = "http://127.0.0.1:7777/#/app/airec/outputs/{path}"
+    assert (
+        report.report_link(path, tmp_path, template)
+        == "http://127.0.0.1:7777/#/app/airec/outputs/reports%2F2026-W45.md"
+    )
+    assert report.report_link(path, tmp_path, None) == path.as_uri()
+
+
+def test_notification_carries_the_link_when_terminal_notifier_exists(monkeypatch):
+    commands = []
+    monkeypatch.setattr("airec.report.sys.platform", "darwin")
+    monkeypatch.setattr("airec.report.shutil.which", lambda *_a, **_k: "/brew/terminal-notifier")
+    monkeypatch.setattr(
+        "airec.report.subprocess.run", lambda command, **_k: commands.append(command)
+    )
+    report.notify("AI Weekly", "ready", "http://x/y")
+    assert commands[0][0] == "/brew/terminal-notifier"
+    assert commands[0][commands[0].index("-open") + 1] == "http://x/y"
+
+
+def test_notification_falls_back_to_applescript(monkeypatch):
+    commands = []
+    monkeypatch.setattr("airec.report.sys.platform", "darwin")
+    monkeypatch.setattr("airec.report.shutil.which", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "airec.report.subprocess.run", lambda command, **_k: commands.append(command)
+    )
+    report.notify('AI "Weekly"', "ready", "http://x/y")
+    assert commands[0][0] == "osascript"
+    assert 'AI \\"Weekly\\"' in commands[0][2]
+
+
+def test_cli_open_uses_the_newest_report(paths, monkeypatch):
+    monkeypatch.setenv("AIREC_HOME", str(paths.home))
+    opened = []
+    monkeypatch.setattr("airec.report.open_link", opened.append)
+    (paths.reports / "2026-W44.md").write_text("old")
+    (paths.reports / "2026-W45.md").write_text("new")
+    assert CliRunner().invoke(cli.app, ["open"]).exit_code == 0
+    assert opened[0].endswith("2026-W45.md")
 
 
 # ---- schedule and CLI ----

@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from airec.config import ReportConfig
 from airec.llm import Usage
 from airec.sections.base import SectionResult, Window
 
 log = logging.getLogger(__name__)
+
+# launchd's PATH leaves out Homebrew.
+_SEARCH_PATH = os.pathsep.join([os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"])
 
 
 @dataclass
@@ -89,12 +94,34 @@ def deliver(markdown: str, folder: Path, week: str, config: ReportConfig) -> Pat
     return path
 
 
-def notify(title: str, message: str) -> None:
-    """A macOS notification; quietly nothing elsewhere."""
+def report_link(path: Path, home: Path, template: str | None) -> str:
+    """Where a report opens: `report.link` with {path} filled in, or the file itself."""
+    if template:
+        relative = path.relative_to(home) if path.is_relative_to(home) else path
+        return template.replace("{path}", quote(str(relative), safe=""))
+    return path.as_uri()
+
+
+def notify(title: str, message: str, link: str) -> None:
+    """A macOS notification that opens `link` when clicked, if terminal-notifier is installed.
+
+    Plain AppleScript notifications cannot carry a click action, so without it the
+    message arrives but clicking does nothing. Elsewhere this does nothing at all.
+    """
     if sys.platform != "darwin":
         return
-    script = f"display notification {_quoted(message)} with title {_quoted(title)}"
-    subprocess.run(["osascript", "-e", script], check=False, capture_output=True, timeout=10)
+    notifier = shutil.which("terminal-notifier", path=_SEARCH_PATH)
+    if notifier:
+        command = [notifier, "-title", title, "-message", message, "-open", link]
+        command += ["-group", "airec"]
+    else:
+        script = f"display notification {_quoted(message)} with title {_quoted(title)}"
+        command = ["osascript", "-e", script]
+    subprocess.run(command, check=False, capture_output=True, timeout=10)
+
+
+def open_link(link: str) -> None:
+    subprocess.run(["open", link], check=True)
 
 
 def _quoted(text: str) -> str:

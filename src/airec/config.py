@@ -59,6 +59,7 @@ class ReportConfig(Strict):
     max_window_days: int = Field(default=14, ge=1)  # the catch-up limit after missed weeks
     copy_to: Path | None = None  # e.g. an Obsidian folder
     notify: bool = True
+    link: str | None = None  # what a notification opens; {path} is relative to the home
 
 
 class ScheduleConfig(Strict):
