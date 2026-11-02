@@ -112,6 +112,10 @@ class Paths:
         return self.home / "logs"
 
     @property
+    def home_card(self) -> Path:
+        return self.home / "hub-card.json"
+
+    @property
     def lock(self) -> Path:
         return self.home / "run.lock"
 

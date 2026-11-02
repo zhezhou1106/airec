@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import typer
+import uvicorn
 
 from airec import pipeline, report, schedule
 from airec.config import ConfigError, Paths, Settings, init_home, load_settings
@@ -16,6 +17,7 @@ from airec.sections.base import Context, Section, Window
 from airec.sections.papers import DirectionScan, Papers, compile_plan
 from airec.sections.papers.directions import load_directions, slugify
 from airec.store import Store
+from airec.web import create_app
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
 direction_app = typer.Typer(no_args_is_help=True, help="Manage paper directions.")
@@ -156,7 +158,10 @@ def _print_plan(title: str, phrases: list[str], categories: list[str]) -> None:
 
 def _print_scan(scan: DirectionScan) -> None:
     _print_plan(scan.plan.title, scan.plan.phrases, scan.plan.categories)
-    typer.echo(f"\n{scan.candidates} candidates, {len(scan.accepted)} on target:")
+    typer.echo(
+        f"\n{scan.candidates} candidates, {scan.relevant} relevant, "
+        f"{len(scan.accepted)} passed the quality gate:"
+    )
     for item in scan.accepted:
         typer.echo(f"  {item.score:>4.1f}  {item.paper.title}\n        {item.reason}")
 
@@ -185,6 +190,13 @@ def schedule_uninstall() -> None:
 
 
 # ---- inspection ----
+
+
+@app.command()
+def serve(port: Annotated[int, typer.Option(help="Port on 127.0.0.1.")] = 8765) -> None:
+    """Open the app: read reports and manage directions."""
+    settings = _settings()
+    uvicorn.run(create_app(settings), host="127.0.0.1", port=port, log_level="warning")
 
 
 @app.command("open")

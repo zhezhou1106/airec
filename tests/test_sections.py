@@ -13,10 +13,19 @@ from airec.sections.ai_news import AiNews, _link_text
 from airec.sections.base import SectionError, Window
 from airec.sections.github_trends import GithubTrends
 from airec.sections.papers import Papers
-from airec.sections.papers.directions import Direction, load_directions, slugify
+from airec.sections.papers.directions import (
+    Direction,
+    load_directions,
+    remove_direction,
+    save_direction,
+    set_paused,
+    slugify,
+    unique_id,
+)
 from airec.sections.papers.plan import SearchPlan
 from airec.sources import news
 from airec.sources.news import Story
+from airec.sources.papers import S2_ATTEMPTS
 from tests.conftest import NOW
 
 WINDOW = Window(NOW - timedelta(days=7), NOW)
@@ -215,6 +224,11 @@ def arxiv_feed(*papers: tuple[str, str]) -> str:
     return f'<feed xmlns="http://www.w3.org/2005/Atom">{entries}</feed>'
 
 
+def gate_all(user: str) -> dict:
+    labels = [line.split(":")[0] for line in user.split("\n\n")]
+    return {"decisions": [{"id": label, "keep": True, "reason": "solid"} for label in labels]}
+
+
 def paper_answers(scores: dict[str, float]):
     """A model that plans, judges by title and writes briefs."""
 
@@ -227,6 +241,8 @@ def paper_answers(scores: dict[str, float]):
                 label, title = line.split("\n")[0].split(": ", 1)
                 verdicts.append({"id": label, "score": scores.get(title, 0), "reason": "fit"})
             return {"verdicts": verdicts}
+        if "last, strict filter" in system:
+            return gate_all(user)
         return {"pulse": "A shared theme.", "papers": [{"id": "p1", "takeaway": "Key finding."}]}
 
     return answer
@@ -254,18 +270,69 @@ def test_papers_flow_from_description_to_report(make_context, web, settings, sto
         ("2610.00002", "Good paper"),
         ("2610.00003", "Off topic"),
     )
-    answer = paper_answers({"Great paper": 9, "Good paper": 7, "Off topic": 2})
-    section = papers_section(make_context, answer, max_featured=1)
-    result = section.run(WINDOW)
+    answer = paper_answers({"Great paper": 9, "Good paper": 8, "Off topic": 2})
+    result = papers_section(make_context, answer).run(WINDOW)
 
     assert "### Test-time training" in result.markdown
-    assert "A shared theme." in result.markdown
-    assert "Key finding." in result.markdown
-    assert "Also relevant:" in result.markdown and "Good paper" in result.markdown
+    assert "A shared theme." in result.markdown and "Key finding." in result.markdown
     assert "Off topic" not in result.markdown
-    assert "*3 new candidates, 2 on target.*" in result.markdown
+    assert "*3 new candidates, 2 relevant, 2 passed the quality gate.*" in result.markdown
     assert sorted(result.shown) == ["arxiv:2610.00001", "arxiv:2610.00002"]
     assert store.get_state("papers", "seeds:ttt") == ["ArXiv:2610.00001", "ArXiv:2610.00002"]
+
+
+def test_quality_gate_caps_the_week_at_five_and_rejects_for_good(make_context, web, settings):
+    add_direction(settings)
+    papers = [(f"2610.0000{n}", f"Paper {n}") for n in range(1, 8)]
+    route_papers(web, *papers)
+    scores = {title: 9 for _, title in papers}
+    plain = paper_answers(scores)
+
+    def answer(role, system, user):
+        if "last, strict filter" in system:
+            decisions = gate_all(user)["decisions"]
+            decisions[6]["keep"] = False
+            return {"decisions": decisions}
+        return plain(role, system, user)
+
+    section = papers_section(make_context, answer)
+    result = section.run(WINDOW)
+    assert result.stats["shown"] == 5
+    assert result.markdown.count("arxiv.org/abs") == 5
+    assert len(result.shown) == 7  # the rejected two are not offered again next week
+    gate_prompt = next(p for p in section.ctx.llm.prompts if "last, strict filter" in p[1])
+    assert "Surveys, position papers" in gate_prompt[1]
+    assert "no code link" in gate_prompt[2]
+
+
+def test_quality_gate_may_keep_nothing(make_context, web, settings):
+    add_direction(settings)
+    route_papers(web, ("2610.00001", "Weak paper"))
+    plain = paper_answers({"Weak paper": 9})
+
+    def answer(role, system, user):
+        if "last, strict filter" in system:
+            return {"decisions": [{"id": "p1", "keep": False, "reason": "no evidence"}]}
+        return plain(role, system, user)
+
+    result = papers_section(make_context, answer).run(WINDOW)
+    assert "Nothing passed the quality gate" in result.markdown
+    assert "Weak paper" not in result.markdown
+    assert result.shown == ["arxiv:2610.00001"]
+
+
+def test_unavailable_quality_gate_fails_rather_than_passing_papers(make_context, web, settings):
+    add_direction(settings)
+    route_papers(web, ("2610.00001", "Paper"))
+    plain = paper_answers({"Paper": 9})
+
+    def answer(role, system, user):
+        if "last, strict filter" in system:
+            return "not json"
+        return plain(role, system, user)
+
+    with pytest.raises(LlmError):
+        papers_section(make_context, answer).run(WINDOW)
 
 
 def test_papers_treat_semantic_scholar_as_optional_and_stop_asking(make_context, web, settings):
@@ -275,7 +342,7 @@ def test_papers_treat_semantic_scholar_as_optional_and_stop_asking(make_context,
     section = papers_section(make_context, paper_answers({"Paper": 8}))
     section.run(WINDOW)
     asks = [r for r in web.requests if "semanticscholar" in str(r.url)]
-    assert len(asks) == 3  # one call's three attempts, then never again
+    assert len(asks) == S2_ATTEMPTS  # one call's patient attempts, then never again
     assert sum("Semantic Scholar" in w for w in section.warnings) == 1
 
 
@@ -324,11 +391,13 @@ def test_papers_shared_by_directions_appear_once_under_the_better_fit(make_conte
 
     def answer(role, system, user):
         if "screen new papers" in system:
-            score = 9 if "Second direction" in system else 7
+            score = 10 if "Second direction" in system else 8
             return {"verdicts": [{"id": "p1", "score": score, "reason": "fit"}]}
         if "weekly literature tracker" in system:
             title = "First" if "First" in user else "Second"
             return {**PLAN, "title": title}
+        if "last, strict filter" in system:
+            return gate_all(user)
         return {"pulse": "", "papers": []}
 
     result = papers_section(make_context, answer).run(WINDOW)
@@ -356,6 +425,8 @@ def test_near_tied_paper_goes_to_the_less_crowded_direction(make_context, web, s
                 else:
                     verdicts.append({"id": label, "score": 9 if "Shared" in title else 0})
             return {"verdicts": verdicts}
+        if "last, strict filter" in system:
+            return gate_all(user)
         return {"pulse": "", "papers": []}
 
     result = papers_section(make_context, answer).run(WINDOW)
@@ -501,6 +572,23 @@ def test_plan_matching_ignores_word_order_and_case():
 def test_plan_rejects_malformed_categories():
     plan = SearchPlan.model_validate({**PLAN, "categories": ["cs.LG", "bad; drop"]})
     assert plan.categories == ["cs.LG"]
+
+
+def test_directions_can_be_paused_edited_and_removed(tmp_path):
+    save_direction(tmp_path, "one", "First text.")
+    set_paused(tmp_path, "one", True)
+    assert load_directions(tmp_path) == []
+    [paused] = load_directions(tmp_path, include_paused=True)
+    assert paused.paused and paused.id == "one"
+
+    save_direction(tmp_path, "one", "New text.")
+    assert (tmp_path / "_one.md").read_text() == "New text.\n"
+    set_paused(tmp_path, "one", False)
+    assert unique_id(tmp_path, "One") == "one-2"
+
+    remove_direction(tmp_path, "one")
+    assert load_directions(tmp_path, include_paused=True) == []
+    assert (tmp_path / ".removed" / "one.md").exists()
 
 
 def test_direction_files(tmp_path):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import plistlib
 import time
 from datetime import UTC, datetime, timedelta
@@ -370,6 +371,20 @@ def test_cli_open_uses_the_newest_report(paths, monkeypatch):
     (paths.reports / "2026-W45.md").write_text("new")
     assert CliRunner().invoke(cli.app, ["open"]).exit_code == 0
     assert opened[0].endswith("2026-W45.md")
+
+
+def test_home_card_has_plain_text_highlights(tmp_path):
+    outcome = report.SectionOutcome(
+        "papers",
+        "Papers",
+        Window(NOW, NOW),
+        SectionResult("body", highlights=["Topic: [A paper](https://arxiv.org/abs/1)"]),
+    )
+    card = tmp_path / "card.json"
+    report.write_home_card(card, "2026-W45", [outcome], "http://hub/link")
+    assert json.loads(card.read_text())["items"] == [
+        {"title": "Topic: A paper", "note": "2026-W45", "url": "http://hub/link"}
+    ]
 
 
 # ---- schedule and CLI ----

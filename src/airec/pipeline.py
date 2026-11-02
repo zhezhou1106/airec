@@ -218,6 +218,9 @@ def generate(
             config = config.model_copy(update={"copy_to": None})
         path = report.deliver(markdown, folder, week, config)
         _commit(store, run_id, week, outcomes)
+        link = report.report_link(path, paths.home, config.link)
+        if not dry_run:
+            report.write_home_card(paths.home_card, week, outcomes, link)
 
         failures = sum(not outcome.ok for outcome in outcomes)
         status = "ok" if not failures else "failed" if failures == len(outcomes) else "partial"
@@ -225,7 +228,7 @@ def generate(
 
     if settings.app.report.notify and not dry_run:
         note = f"{week} is ready" if status == "ok" else f"{week}: {failures} section(s) failed"
-        report.notify(title, note, report.report_link(path, paths.home, config.link))
+        report.notify(title, note, link)
     return RunResult(path, status, outcomes)
 
 

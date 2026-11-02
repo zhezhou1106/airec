@@ -1,8 +1,8 @@
 """Paper sources: arXiv search, Semantic Scholar, Hugging Face daily papers.
 
 arXiv is the backbone. Semantic Scholar adds conference papers and
-recommendations from papers already accepted, but it rate-limits hard, so
-sections treat it as a bonus.
+recommendations from papers already accepted. It works without a key, but the
+shared pool often refuses, so sections treat it as a bonus.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from airec.sources.common import GITHUB_URL, clean_text, from_struct, parse_iso
 ARXIV_API = "https://export.arxiv.org/api/query"
 ARXIV_PAUSE_SECONDS = 3.0  # arXiv asks for one request every three seconds
 S2_API = "https://api.semanticscholar.org"
+S2_ATTEMPTS = 6  # the keyless pool is shared and refuses often; waiting usually works
 S2_FIELDS = "title,externalIds,abstract,publicationDate,citationCount,venue,authors,url"
 HF_DAILY = "https://huggingface.co/api/daily_papers"
 _ARXIV_ID = re.compile(r"(\d{4}\.\d{4,5})")
@@ -161,6 +162,7 @@ class SemanticScholar:
             },
             headers=self.headers,
             timeout=60,
+            attempts=S2_ATTEMPTS,
         )
         found = (_s2_paper(item, "semantic_scholar") for item in response.json().get("data") or [])
         return [paper for paper in found if paper]
@@ -173,6 +175,7 @@ class SemanticScholar:
             json={"positivePaperIds": seeds},
             headers=self.headers,
             timeout=60,
+            attempts=S2_ATTEMPTS,
         )
         found = (
             _s2_paper(item, "recommendations")

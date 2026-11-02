@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +20,7 @@ from airec.sections.base import SectionResult, Window
 
 log = logging.getLogger(__name__)
 
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 # launchd's PATH leaves out Homebrew.
 _SEARCH_PATH = os.pathsep.join([os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"])
 
@@ -92,6 +95,18 @@ def deliver(markdown: str, folder: Path, week: str, config: ReportConfig) -> Pat
         except OSError as exc:
             log.warning("Could not copy the report to %s: %s", target, exc)
     return path
+
+
+def write_home_card(
+    path: Path, week: str, outcomes: list[SectionOutcome], link: str, limit: int = 5
+) -> None:
+    """The top of this week's report, for a my-hub home card. Plain text: cards show no Markdown."""
+    highlights = [h for outcome in outcomes if outcome.result for h in outcome.result.highlights]
+    items = [
+        {"title": _MD_LINK.sub(r"\1", highlight)[:160], "note": week, "url": link}
+        for highlight in highlights[:limit]
+    ]
+    path.write_text(json.dumps({"items": items}, ensure_ascii=False), encoding="utf-8")
 
 
 def report_link(path: Path, home: Path, template: str | None) -> str:

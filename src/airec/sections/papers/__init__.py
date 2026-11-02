@@ -8,7 +8,9 @@ A direction is a text file. Everything else is derived from it:
               and recommendations seeded by papers accepted in earlier weeks
     judge     a fast model scores each new title and abstract against the description
               (verdicts are cached, so a paper is judged once per direction)
-    brief     a writer condenses the best into a pulse and short takeaways
+    gate      a stricter model applies written quality rules to the shortlist and keeps
+              at most `max_papers`, possibly none
+    brief     a writer condenses the survivors into a pulse and short takeaways
 
 Nothing here reads full papers or sweeps whole arXiv categories.
 """
@@ -38,6 +40,16 @@ _ABSTRACT_CHARS = 1100
 _WORKERS = 4
 _MAX_FAILED_BATCHES = 4  # one in this many may fail before the section does
 _SCORE_TIE = 1.0  # scores this close are a tie between directions
+DEFAULT_QUALITY_RULES = [
+    "It reports a concrete new method, mechanism, dataset or finding. Surveys, position papers, "
+    "proposals and system descriptions without evaluation fail.",
+    "The abstract shows real evidence: experiments, a proof, or a controlled comparison, with "
+    "named baselines or concrete results. Vague claims of improvement fail.",
+    "The contribution is the idea, not the application: a known method applied to one domain "
+    "fails.",
+    "It adds something new. A small tweak of a known method with a minor benchmark gain fails.",
+    "When two papers are otherwise equal, prefer released code, then the more careful evaluation.",
+]
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper_verdicts (
     direction TEXT NOT NULL,
@@ -58,6 +70,16 @@ class Verdict(BaseModel):
 
 class Verdicts(BaseModel):
     verdicts: list[Verdict]
+
+
+class GateDecision(BaseModel):
+    id: str
+    keep: bool
+    reason: str = ""
+
+
+class GateResult(BaseModel):
+    decisions: list[GateDecision]
 
 
 class Takeaway(BaseModel):
@@ -83,7 +105,9 @@ class DirectionScan:
     direction: Direction
     plan: SearchPlan
     candidates: int
-    accepted: list[Scored]
+    relevant: int  # past the relevance screen
+    accepted: list[Scored]  # past the quality gate
+    rejected: list[str]  # ids the gate turned down; not worth offering again
 
 
 @register
@@ -93,9 +117,10 @@ class Papers(Section):
     schema = _SCHEMA
 
     class Config(Strict):
-        min_score: float = Field(default=7.0, ge=0, le=10)
-        max_featured: int = Field(default=5, ge=1)  # papers with a takeaway, per direction
-        max_listed: int = Field(default=5, ge=0)  # further one-liners, per direction
+        min_score: float = Field(default=8.0, ge=0, le=10)  # relevance needed to reach the gate
+        max_papers: int = Field(default=5, ge=1)  # most papers per direction, per week
+        max_shortlist: int = Field(default=15, ge=1)  # how many the gate may consider
+        quality_rules: list[str] = DEFAULT_QUALITY_RULES
         max_candidates: int = Field(default=200, ge=1)  # judged per direction, per run
         arxiv_per_query: int = Field(default=100, ge=1)
         judge_batch: int = Field(default=15, ge=1)
@@ -132,7 +157,7 @@ class Papers(Section):
             blocks.append(block)
             if top:
                 highlights.append(top)
-            shown += [item.paper.id for item in self._listed(scan)]
+            shown += [item.paper.id for item in scan.accepted] + scan.rejected
             self._remember_seeds(scan)
         return SectionResult(
             markdown="\n\n".join(blocks),
@@ -141,8 +166,8 @@ class Papers(Section):
             stats={
                 "directions": len(scans),
                 "candidates": sum(scan.candidates for scan in scans),
-                "accepted": sum(len(scan.accepted) for scan in scans),
-                "shown": len(set(shown)),
+                "relevant": sum(scan.relevant for scan in scans),
+                "shown": sum(len(scan.accepted) for scan in scans),
             },
         )
 
@@ -171,9 +196,40 @@ class Papers(Section):
             )
             papers = papers[: self.config.max_candidates]
         scored = self._judge(direction, plan, papers)
-        accepted = [item for item in scored if item.score >= self.config.min_score]
-        accepted.sort(key=lambda item: (item.score, item.paper.upvotes), reverse=True)
-        return DirectionScan(direction, plan, len(papers), accepted)
+        relevant = [item for item in scored if item.score >= self.config.min_score]
+        relevant.sort(key=lambda item: (item.score, item.paper.upvotes), reverse=True)
+        shortlist = relevant[: self.config.max_shortlist]
+        kept, rejected = self._gate(direction, shortlist)
+        return DirectionScan(direction, plan, len(papers), len(relevant), kept, rejected)
+
+    def _gate(
+        self, direction: Direction, shortlist: list[Scored]
+    ) -> tuple[list[Scored], list[str]]:
+        """Apply the quality rules. If this cannot run, the section fails: never pass unchecked."""
+        if not shortlist:
+            return [], []
+        labels = {f"p{number}": item for number, item in enumerate(shortlist, 1)}
+        rules = "\n".join(f"{n}. {rule}" for n, rule in enumerate(self.config.quality_rules, 1))
+        system = prompts.render(
+            "paper_gate",
+            description=direction.description,
+            rules=rules,
+            max_papers=self.config.max_papers,
+        )
+        user = "\n\n".join(
+            f"{label}: {item.paper.title}\n{_evidence(item.paper)}\n"
+            f"{item.paper.abstract[:_ABSTRACT_CHARS]}"
+            for label, item in labels.items()
+        )
+        result = self.ctx.llm.json("writer", system, user, GateResult)
+        kept = []
+        for decision in result.decisions:
+            item = labels.get(decision.id)
+            if decision.keep and item is not None and item not in kept:
+                item.reason = decision.reason.strip() or item.reason
+                kept.append(item)
+        kept = kept[: self.config.max_papers]
+        return kept, [item.paper.id for item in shortlist if item not in kept]
 
     def _retrieve(
         self, direction: Direction, plan: SearchPlan, window: Window, daily: list[Paper]
@@ -289,18 +345,16 @@ class Papers(Section):
 
     # ---- writing ----
 
-    def _listed(self, scan: DirectionScan) -> list[Scored]:
-        return scan.accepted[: self.config.max_featured + self.config.max_listed]
-
     def _brief(self, scan: DirectionScan) -> tuple[str, str | None]:
         """A direction's block, and its top paper for the summary."""
         heading = f"### {scan.plan.title}"
-        funnel = f"*{scan.candidates} new candidates, {len(scan.accepted)} on target.*"
+        funnel = (
+            f"*{scan.candidates} new candidates, {scan.relevant} relevant, "
+            f"{len(scan.accepted)} passed the quality gate.*"
+        )
         if not scan.accepted:
-            return f"{heading}\n\nNothing on target this week. {funnel}", None
-        featured = scan.accepted[: self.config.max_featured]
-        rest = scan.accepted[self.config.max_featured : len(self._listed(scan))]
-        labels = {f"p{number}": item for number, item in enumerate(featured, 1)}
+            return f"{heading}\n\nNothing passed the quality gate this week. {funnel}", None
+        labels = {f"p{number}": item for number, item in enumerate(scan.accepted, 1)}
         system = prompts.render("paper_brief", description=scan.direction.description)
         user = "\n\n".join(
             f"{label}: {item.paper.title}\nWhy relevant: {item.reason}\n"
@@ -314,12 +368,9 @@ class Papers(Section):
         if brief.pulse.strip():
             lines += [brief.pulse.strip(), ""]
         for label, item in labels.items():
-            lines.append(_featured_line(item, takeaways.get(label) or item.reason))
-        if rest:
-            lines += ["", "Also relevant:", ""]
-            lines += [_listed_line(item) for item in rest]
+            lines.append(_paper_line(item, takeaways.get(label) or item.reason))
         lines += ["", funnel]
-        top = featured[0]
+        top = scan.accepted[0]
         highlight = f"{scan.plan.title}: [{top.paper.title}]({top.paper.url})"
         return "\n".join(lines), highlight
 
@@ -370,11 +421,16 @@ def _signals(item: Scored) -> str:
     return " · ".join(parts)
 
 
-def _featured_line(item: Scored, takeaway: str) -> str:
+def _evidence(paper: Paper) -> str:
+    facts = []
+    if paper.venue:
+        facts.append(f"venue: {paper.venue}")
+    if paper.upvotes:
+        facts.append(f"community upvotes: {paper.upvotes}")
+    facts.append("code released" if paper.code_url else "no code link")
+    return "; ".join(facts)
+
+
+def _paper_line(item: Scored, takeaway: str) -> str:
     paper = item.paper
     return f"- **[{paper.title}]({paper.url})** ({_signals(item)})  \n  {takeaway.strip()}"
-
-
-def _listed_line(item: Scored) -> str:
-    paper = item.paper
-    return f"- [{paper.title}]({paper.url}) ({_signals(item)}): {item.reason.strip()}"

@@ -76,6 +76,7 @@ sections:
     subreddits: [LocalLLaMA, MachineLearning]
 
   papers:
-    min_score: 7            # 0-10; raise for fewer, surer papers
-    max_featured: 5         # papers with a takeaway, per direction
-    max_listed: 5           # further one-liners, per direction
+    max_papers: 5           # most papers per direction, per week; the gate may keep fewer
+    min_score: 8            # 0-10 relevance needed to reach the quality gate
+    # quality_rules:        # replace the built-in strict rules with your own list
+    #   - It reports a concrete new method or finding with real evidence.

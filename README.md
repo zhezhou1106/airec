@@ -8,11 +8,12 @@ Once a week airec writes one Markdown report with three sections:
 |---|---|---|
 | **GitHub: rising repos** | New AI repositories gaining stars, with what each one does | Measures momentum, then reads READMEs only for the top candidates |
 | **AI news** | Model releases, techniques, company moves and tools, merged and sorted | One editor pass over lab feeds, Hugging Face, Hacker News, Reddit, web search and repo releases |
-| **Papers on your directions** | New papers on each direction you describe | Targeted searches, title and abstract screening, no category sweeps and no full-text reading |
+| **Papers on your directions** | At most five papers a week per direction, only if they pass strict quality rules | Targeted searches, title and abstract screening, no category sweeps and no full-text reading |
 
 For papers you write a description and nothing else. A model derives the search phrases,
-categories and criteria, scores each new paper against your description, and writes a short
-takeaway for the best ones. Papers it accepts improve next week's recommendations.
+categories and criteria and scores each new paper against your description. A second, stricter
+model then checks the shortlist against written quality rules and keeps at most five, or none in
+a weak week, with a short takeaway for each. Papers it keeps improve next week's recommendations.
 
 ## Setup
 
@@ -28,6 +29,7 @@ $EDITOR ~/.airec/.env  # add your keys
 rec doctor             # checks models, keys and every source
 rec run                # your first report
 rec schedule install   # from now on, weekly (macOS)
+rec serve              # the app, at http://127.0.0.1:8765
 ```
 
 Reports land in `~/.airec/reports/2026-W45.md`, plus any folder you set as `report.copy_to` (an
@@ -35,7 +37,18 @@ Obsidian vault works well). `rec open` opens the latest one. A macOS notificatio
 report; with `brew install terminal-notifier`, clicking it opens the report, or the URL you set as
 `report.link`.
 
+## The app
+
+`rec serve` opens a small app for reading and steering, styled to match
+[my-hub](#using-it-with-my-hub):
+
+- **This week:** the report as cards, with earlier weeks one click away.
+- **Directions:** add, edit, pause or remove a direction, see its search plan, and **Preview** what
+  it would catch in the last two weeks, without recording anything.
+
 ## Tracking a direction
+
+Add a direction in the app, or from the terminal:
 
 ```bash
 rec direction add "Continual learning for LLMs: how a deployed model keeps acquiring ..."
@@ -49,6 +62,9 @@ the description, so you can also just create or edit files. Editing the text reb
 plan on the next run. Prefix a file with `_` to pause it. The more precisely you say what does and
 does not count, the better the screening.
 
+Each paper passes two checks. `papers.min_score` is the relevance score needed to reach the quality
+gate, and `papers.quality_rules` replaces the built-in rules. `papers.max_papers` caps the week.
+
 ## Commands
 
 ```
@@ -60,6 +76,7 @@ rec run                         generate this week's report
     --if-due                    run only if this week's report is owed (the scheduler uses this)
 rec direction add|list|test     manage paper directions
 rec schedule install|uninstall  turn the weekly run on or off (macOS)
+rec serve [--port N]            the app
 rec open                        open the latest report
 rec status                      schedule state and recent runs
 rec doctor                      check config, keys, models and sources
@@ -98,10 +115,41 @@ logs/           model traces and scheduler output
 | `DEEPSEEK_API_KEY` | all model calls with the default config | required (or point `llm.providers` at any OpenAI-compatible server) |
 | `GITHUB_TOKEN` | repo details, READMEs and releases | strongly recommended |
 | `TAVILY_API_KEY` | news from labs without a feed | optional |
-| `SEMANTIC_SCHOLAR_API_KEY` | conference papers and recommendations | optional; without it the shared pool often refuses, and airec continues with arXiv |
+| `SEMANTIC_SCHOLAR_API_KEY` | steadier conference papers and recommendations | optional; they work without a key through a shared pool that often refuses, in which case airec retries patiently and then continues with arXiv |
 
 Models are chosen by role in `config.yaml`: `fast` screens in bulk, `writer` produces what you
 read. `report.reader` describes you, and tailors the news and repo sections.
+
+## Using it with my-hub
+
+Register airec in the hub with a manifest whose app root is your airec home:
+
+```toml
+path = "${HOME}/.airec"
+id = "airec"
+
+[service]
+cmd = ["<repo>/.venv/bin/rec", "serve", "--port", "{port}"]
+port = "auto"
+open_in = "tab"
+
+[[outputs]]
+label = "Weekly report"
+glob = "reports/*.md"
+latest = "name"
+primary = true
+
+[[widgets]]
+id = "this-week"
+title = "AI Weekly"
+kind = "list"
+file = "hub-card.json"
+size = "m"
+```
+
+Set `report.link` to `http://127.0.0.1:7777/#/app/airec/outputs/{path}` so notifications and
+`rec open` go to the hub. airec writes `hub-card.json` with each report, and the hub shows it on
+its home page.
 
 ## Adding a section
 
@@ -152,6 +200,7 @@ src/airec/
   http.py       shared client with retries
   store.py      SQLite memory
   sections/     the plugins: base.py (contract), github_trends, ai_news, papers/
+  web/          the app: one FastAPI module, templates and static files
   sources/      outside services, knowing nothing about reports
   prompts/      every prompt as plain text
   defaults/     what `rec init` copies
