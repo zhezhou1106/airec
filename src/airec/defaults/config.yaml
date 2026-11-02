@@ -1,0 +1,79 @@
+# airec configuration. Sections run and appear in the order listed under `sections`.
+
+llm:
+  providers:
+    deepseek:
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+    # Any OpenAI-compatible server works, including a local one:
+    # local:
+    #   base_url: http://localhost:11434/v1
+  roles:
+    fast: {provider: deepseek, model: deepseek-flash, temperature: 0.1}     # bulk judging
+    writer: {provider: deepseek, model: deepseek-v4-pro, temperature: 0.3}  # what you read
+
+report:
+  title: AI Weekly
+  reader: >
+    An ML researcher who wants a broad, accurate view of the AI field.
+  first_window_days: 7
+  max_window_days: 14       # after missed weeks, catch up this far at most
+  copy_to: null             # also write each report here, e.g. ~/Documents/vault/AI Weekly
+  notify: true              # macOS notification when a report is ready
+
+schedule:
+  weekday: 1                # ISO weekday; 1 is Monday
+  hour: 9                   # local time; if the Mac is off, the run happens at next wake
+  max_attempts: 3           # per week, when a section keeps failing
+
+sections:
+  github_trends:
+    max_age_days: 120       # a repo counts as new until this age
+    min_stars: 150
+    max_repos: 10
+    cooldown_weeks: 8       # before the same repo can appear again
+    trending_languages: ["", python, typescript, rust]   # "" is all languages
+    search_topics: [llm, ai-agents, mcp, generative-ai, machine-learning, rag, llm-inference]
+
+  ai_news:
+    max_stories: 14
+    categories:
+      - Model releases
+      - Techniques & research
+      - Companies & industry
+      - Tools & infrastructure
+    feeds:
+      - {name: OpenAI, url: "https://openai.com/news/rss.xml", primary: true}
+      - {name: Google DeepMind, url: "https://deepmind.google/blog/rss.xml", primary: true}
+      - {name: Google Research, url: "https://research.google/blog/rss/", primary: true}
+      - {name: Google AI, url: "https://blog.google/technology/ai/rss/", primary: true}
+      - {name: Mistral, url: "https://mistral.ai/rss.xml", primary: true}
+      - {name: Qwen, url: "https://qwenlm.github.io/blog/index.xml", primary: true}
+      - {name: Hugging Face, url: "https://huggingface.co/blog/feed.xml", primary: true}
+      - {name: Simon Willison, url: "https://simonwillison.net/atom/everything/"}
+      - {name: Latent Space, url: "https://www.latent.space/feed"}
+      - {name: Import AI, url: "https://importai.substack.com/feed"}
+      - {name: Interconnects, url: "https://www.interconnects.ai/feed"}
+      - {name: smol.ai, url: "https://news.smol.ai/rss.xml"}
+      - {name: TechCrunch AI, url: "https://techcrunch.com/category/artificial-intelligence/feed/"}
+      - {name: The Verge AI, url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"}
+    web_queries:   # labs without a feed, and whatever no feed carries
+      - Anthropic Claude announcement
+      - Meta AI new model release
+      - xAI Grok release
+      - DeepSeek new model
+      - open-weight language model release
+      - AI startup acquisition or major funding
+    watch_repos:   # their releases count as news
+      - huggingface/transformers
+      - vllm-project/vllm
+      - ggml-org/llama.cpp
+      - ollama/ollama
+    hn_queries: [LLM, AI model, OpenAI, Anthropic, open source model]
+    hn_min_points: 100
+    subreddits: [LocalLLaMA, MachineLearning]
+
+  papers:
+    min_score: 7            # 0-10; raise for fewer, surer papers
+    max_featured: 5         # papers with a takeaway, per direction
+    max_listed: 5           # further one-liners, per direction

@@ -1,9 +1,3 @@
-# yours, never committed: keys, your config, your data
-.env
-config/
-data/
-archive/
-
 # python
 .venv/
 __pycache__/
@@ -11,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+dist/
 
 # local tools
 .claude/

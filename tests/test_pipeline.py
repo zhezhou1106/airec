@@ -1,177 +1,256 @@
-"""The whole run, offline: collect → triage → score → select → read → news → write."""
+"""Whole runs: windows, failure isolation, scheduling, and adding a section."""
+
 from __future__ import annotations
 
-import json
-import time
+import plistlib
+from datetime import timedelta
 
 import pytest
+from typer.testing import CliRunner
 
-from config import Config
-from pipeline import RunOptions, run_digest
-from runlog import RunContext
-from store import Store
-
-from conftest import DAY, news_item, paper
-
-
-def run(cfg: Config, **opts) -> int:
-    with RunContext(cfg, "run") as rc:
-        return run_digest(cfg, rc, RunOptions(**opts))
+from airec import cli, pipeline, schedule
+from airec.config import ConfigError, Strict, load_settings
+from airec.sections import _REGISTRY, build_sections, register
+from airec.sections.base import Section, SectionResult, Window
+from airec.store import Store
+from tests.conftest import NOW, ScriptedLlm, write_config
 
 
-def test_first_run_writes_a_digest(world, cfg, home):
-    world.knowledge = [paper(n, f"Method number {n}") for n in range(1, 21)]
-    run_id = run(cfg)
+class Probe(Section):
+    """A minimal third-party section, registered only inside these tests."""
 
-    store = Store(cfg.db_path)
-    row = store.run(run_id)
-    assert row["status"] == "done"
-    d = json.loads(row["digest"])
-    assert d["counts"]["notes"] == 8  # max_notes_per_topic 4 × the 2 topics the fake uses
-    assert d["counts"]["mentions"] == 12
-    assert "[1]" in d["article"] and "[99]" not in d["article"]
-    notes = [r for s in d["sections"] for r in s["notes"]]
-    assert [r["n"] for r in notes] == list(range(1, 9))
-    assert all("**Open it if**" in r["note"] for r in notes)
-    # saved in both places, citations turned into links
-    vault = list((home / "vault").glob("*.md"))
-    assert len(vault) == 1 and "## This time" in vault[0].read_text()
-    assert "[1](https://arxiv.org/abs/" in vault[0].read_text()
-    assert list(cfg.digests_dir.glob("*.md"))
-    assert store.get("knowledge_until") == pytest.approx(row["k_until"])
-    assert store.get("news_until") is None  # news off by default
+    key = "probe"
+    title = "Probe"
+    windows: list[Window] = []
+    outcomes: list[object] = []
+
+    class Config(Strict):
+        label: str = "item"
+
+    def run(self, window: Window) -> SectionResult:
+        Probe.windows.append(window)
+        next_outcome = Probe.outcomes.pop(0) if Probe.outcomes else "ok"
+        if isinstance(next_outcome, Exception):
+            raise next_outcome
+        return SectionResult(
+            f"{self.config.label} body", highlights=["probe highlight"], shown=["x"], stats={"n": 1}
+        )
 
 
-def test_nothing_is_shown_twice_without_a_reason(world, cfg):
-    world.knowledge = [paper(n, f"Method number {n}") for n in range(1, 6)]
-    first = run(cfg)
-    world.calls.clear()
-    second = run(cfg, days=3)
-
-    store = Store(cfg.db_path)
-    d = json.loads(store.run(second)["digest"])
-    assert d["counts"]["notes"] == 0 and d["counts"]["mentions"] == 0
-    # the index saved the work: no triage or scoring of known items again
-    assert "triage" not in world.calls and "score" not in world.calls
-    assert first != second
+class Steady(Probe):
+    key = "steady"
+    title = "Steady"
 
 
-def test_a_changed_item_comes_back_with_its_reason(world, cfg):
-    world.knowledge = [paper(1, "Weight transfer for RL")]
-    run(cfg)
-    world.knowledge = [paper(1, "Weight transfer for RL", code_url="https://github.com/a/b")]
-    second = run(cfg, days=3)
-    d = json.loads(Store(cfg.db_path).run(second)["digest"])
-    notes = [r for s in d["sections"] for r in s["notes"]]
-    assert len(notes) == 1 and notes[0]["back"] == "code released"
+@pytest.fixture(autouse=True)
+def registered():
+    register(Probe)
+    register(Steady)
+    Probe.windows, Probe.outcomes = [], []
+    yield
+    _REGISTRY.pop("probe", None)
+    _REGISTRY.pop("steady", None)
 
 
-def test_a_new_topic_brings_old_items_back(world, cfg, home, monkeypatch):
-    import conftest
-    import yaml
-
-    world.knowledge = [paper(1, "Weight transfer for RL")]
-    run(cfg)
-    path = home / "config/interests.yaml"
-    data = yaml.safe_load(path.read_text())
-    data["topics"].append({"id": "fresh-topic", "name": "Fresh topic", "priority": "core",
-                           "summary": "Something the map did not have before."})
-    path.write_text(yaml.safe_dump(data))
-    orig = conftest.fake_reply
-    monkeypatch.setattr(conftest, "fake_reply", lambda w, phase, user: (
-        orig(w, phase, user).replace("post-training-rl", "fresh-topic")
-        if phase == "triage" else orig(w, phase, user)))
-    second = run(Config(), days=3)
-    d = json.loads(Store(cfg.db_path).run(second)["digest"])
-    backs = [r["back"] for s in d["sections"] for r in s["notes"]] + \
-            [r["back"] for r in d["mentions"]]
-    assert backs == ["matches your new topic \u201cFresh topic\u201d"]
+@pytest.fixture
+def probe_settings(paths):
+    write_config(paths, probe={"label": "hello"}, steady={})
+    return load_settings(paths)
 
 
-def test_a_failed_run_resumes_without_redoing_work(world, cfg):
-    world.knowledge = [paper(n, f"Method number {n}") for n in range(1, 11)]
-    world.fail_phase = "note"
-    with pytest.raises(Exception):
-        run(cfg)
-    store = Store(cfg.db_path)
-    failed = store.runs("run", limit=1)[0]
-    assert store.get("knowledge_until") is None  # the window did not move
-    triage_calls = world.calls["triage"]
-
-    world.fail_phase = None
-    resumed = run(cfg, resume=failed["id"])
-    assert resumed == failed["id"]
-    assert world.calls["triage"] == triage_calls
-    assert Store(cfg.db_path).run(resumed)["status"] == "done"
+def generate(settings, web, now=NOW, **options):
+    llm = ScriptedLlm(settings, lambda *_: {})
+    return pipeline.generate(settings, now=now, transport=web, llm=llm, **options)
 
 
-def test_news_window_never_overlaps_and_is_capped(world, cfg, home):
-    world.knowledge = [paper(1, "A paper")]
-    world.news = [news_item(1, "Model X released", days_ago=2),
-                  news_item(2, "Old story", days_ago=20)]
-    first = run(cfg, news=True)
-    since, until = world.windows["news"][0]
-    assert until - since == pytest.approx(7 * DAY, abs=60)  # capped at max_days
-    d = json.loads(Store(cfg.db_path).run(first)["digest"])
-    assert "Model X released" not in d["news"]["markdown"]  # the model wrote its own words
-    assert "(https://example.com/news/1)" in d["news"]["markdown"]
-
-    run(cfg, news=True)
-    since2, _ = world.windows["news"][1]
-    assert since2 == pytest.approx(until, abs=1)  # starts where the last one ended
+def test_a_new_section_needs_only_a_class_and_a_config_block(probe_settings, web):
+    result = generate(probe_settings, web)
+    text = result.path.read_text()
+    assert result.status == "ok"
+    assert result.path.name == "2026-W45.md"
+    assert "## Probe\n\nhello body" in text
+    assert "## At a glance" in text and "- probe highlight" in text
 
 
-def test_missing_api_key_fails_before_collecting(world, cfg, home):
-    (home / ".env").write_text("")
-    with pytest.raises(Exception, match="DEEPSEEK_API_KEY"):
-        run(Config())
-    assert world.windows["knowledge"] == []
+def test_section_order_follows_config(paths, web):
+    write_config(paths, steady={}, probe={})
+    text = generate(load_settings(paths), web).path.read_text()
+    assert text.index("## Steady") < text.index("## Probe")
 
 
-def test_explore_share_keeps_room_outside_the_map(world, cfg, monkeypatch):
-    import conftest
-    orig = conftest.fake_reply
-
-    def with_other(world_, phase, user):
-        out = orig(world_, phase, user)
-        if phase == "triage":
-            lines = out.splitlines()
-            lines[-1] = lines[-1].rsplit(" ", 1)[0] + " other"
-            return "\n".join(lines)
-        return out
-
-    monkeypatch.setattr(conftest, "fake_reply", with_other)
-    world.knowledge = [paper(n, f"Method number {n}") for n in range(1, 21)]
-    run_id = run(cfg)
-    d = json.loads(Store(cfg.db_path).run(run_id)["digest"])
-    assert "other" in [s["topic"] for s in d["sections"]]
+def test_disabled_section_is_skipped(paths, web):
+    write_config(paths, steady={}, probe={"enabled": False})
+    assert "## Probe" not in generate(load_settings(paths), web).path.read_text()
 
 
-def test_stale_running_rows_are_abandoned(world, cfg):
-    store = Store(cfg.db_path)
-    stale = store.create_run("run", "data/logs/x", k_since=time.time() - DAY, k_until=time.time())
-    world.knowledge = [paper(1, "A paper")]
-    run(cfg)
-    assert Store(cfg.db_path).run(stale)["status"] == "abandoned"
+def test_unknown_section_and_bad_options_are_config_errors(paths, web):
+    write_config(paths, nonsense={})
+    with pytest.raises(ConfigError, match="nonsense"):
+        generate(load_settings(paths), web)
+    write_config(paths, probe={"lable": "typo"})
+    with pytest.raises(ConfigError, match="lable"):
+        generate(load_settings(paths), web)
 
 
-def test_items_over_the_triage_limit_carry_over(world, cfg, home):
-    import yaml
+def test_one_failed_section_leaves_the_other_and_is_retried_next_week(probe_settings, web):
+    week_ago = NOW - timedelta(days=7)
+    generate(probe_settings, web, now=week_ago)
 
-    from phases.common import Job
-    path = home / "config/settings.yaml"
-    data = yaml.safe_load(path.read_text())
-    data["run"]["triage_max"] = 5
-    path.write_text(yaml.safe_dump(data))
-    cfg = Config()
-    world.knowledge = [paper(n, f"Method number {n}") for n in range(1, 13)]
-    run(cfg)
-    world.knowledge = []          # nothing new: only the carried-over items remain
-    run(cfg, days=1)
-    run(cfg, days=1)
-    store = Store(cfg.db_path)
-    with RunContext(cfg, "check", take_lock=False) as rc:
-        key = Job(cfg, store, rc).key("triage")
-    ids = [p["id"] for p in [paper(n, "") for n in range(1, 13)]]
-    assert len(store.triaged(key, ids)) == 12          # 5 + 5 + 2 over three runs
-    assert store.untriaged_recent(key, 0, set()) == []
+    Probe.outcomes = [RuntimeError("source exploded")]
+    failed_run = generate(probe_settings, web)
+    text = failed_run.path.read_text()
+    assert failed_run.status == "partial"
+    assert "failed and will be retried" in text and "Steady" in text
+
+    Probe.windows.clear()
+    generate(probe_settings, web, now=NOW + timedelta(days=7))
+    # probe failed last week, so its next window starts where the last success ended
+    assert Probe.windows[0].since == week_ago
+    # steady succeeded, so it continues exactly where it left off
+    assert Probe.windows[1].since == NOW
+
+
+def test_catch_up_is_limited(probe_settings, web):
+    generate(probe_settings, web)
+    later = NOW + timedelta(days=60)
+    generate(probe_settings, web, now=later)
+    assert Probe.windows[-2].since == later - timedelta(days=14)
+
+
+def test_window_starts_at_the_first_run_and_rerun_rebuilds_it(probe_settings, web):
+    generate(probe_settings, web)
+    generate(probe_settings, web, now=NOW + timedelta(hours=2))
+    assert Probe.windows[2].since == NOW + timedelta(hours=2) - timedelta(days=7)
+
+
+def test_days_override(probe_settings, web):
+    generate(probe_settings, web, days=3)
+    assert Probe.windows[0].since == NOW - timedelta(days=3)
+
+
+def test_dry_run_leaves_no_trace(probe_settings, web):
+    result = generate(probe_settings, web, dry_run=True)
+    assert result.path.parent.name == "drafts"
+    store = Store(probe_settings.paths.db) if probe_settings.paths.db.exists() else None
+    assert store is None or store.recent_runs() == []
+
+
+def test_single_section_run_never_replaces_the_report(probe_settings, web):
+    result = generate(probe_settings, web, only="probe")
+    assert result.path.parent.name == "drafts"
+    assert "## Steady" not in result.path.read_text()
+
+
+def test_report_is_copied_when_configured(paths, web, tmp_path):
+    write_config(paths, probe={})
+    text = paths.config.read_text().replace("copy_to: null", f"copy_to: {tmp_path / 'vault'}")
+    paths.config.write_text(text)
+    generate(load_settings(paths), web)
+    assert (tmp_path / "vault" / "2026-W45.md").exists()
+
+
+def test_concurrent_runs_are_refused(probe_settings, web):
+    with (
+        pipeline._exclusive(probe_settings.paths.lock),
+        pytest.raises(pipeline.AlreadyRunning),
+    ):
+        generate(probe_settings, web)
+
+
+def test_run_records_warnings_in_the_report(probe_settings, web):
+    original = Probe.run
+
+    def warned(self, window):
+        self.warn("a feed was down")
+        return original(self, window)
+
+    Probe.run = warned
+    try:
+        text = generate(probe_settings, web).path.read_text()
+    finally:
+        Probe.run = original
+    assert "a feed was down" in text
+
+
+def test_build_sections_keeps_config_order(probe_settings, make_context):
+    assert [s.key for s in build_sections(make_context_for(probe_settings, make_context))] == [
+        "probe",
+        "steady",
+    ]
+
+
+def make_context_for(settings, make_context):
+    ctx = make_context()
+    ctx.settings = settings
+    return ctx
+
+
+# ---- is_due ----
+
+
+def due(settings, store, moment):
+    return pipeline.is_due(settings, store, moment)
+
+
+def local(day: int, hour: int):
+    """A moment in local time in the week of Monday 2026-11-02."""
+    return NOW.astimezone().replace(day=day, hour=hour, minute=30)
+
+
+def test_due_only_after_the_weekly_slot(settings, store):
+    assert not due(settings, store, local(2, 8))  # Monday, before nine
+    assert due(settings, store, local(2, 9))
+    assert due(settings, store, local(5, 3))  # the Mac slept until Thursday
+
+
+def test_not_due_once_this_week_is_complete(settings, store):
+    moment = local(3, 10)
+    run = store.start_run(pipeline.iso_week(moment))
+    store.finish_run(run, "ok", "report.md", 0)
+    assert not due(settings, store, moment)
+
+
+def test_partial_runs_retry_up_to_the_limit(settings, store):
+    moment = local(3, 10)
+    week = pipeline.iso_week(moment)
+    for attempt in range(settings.app.schedule.max_attempts):
+        assert due(settings, store, moment), attempt
+        store.finish_run(store.start_run(week), "partial", "report.md", 0)
+    assert not due(settings, store, moment)
+
+
+def test_online_is_false_on_network_errors():
+    import httpx
+
+    def down():
+        raise httpx.ConnectError("no route")
+
+    assert not pipeline.online(down)
+    assert pipeline.online(lambda: None)
+
+
+# ---- schedule and CLI ----
+
+
+def test_plist_runs_the_if_due_check_hourly(settings):
+    plist = schedule.build_plist(settings.paths, python="/venv/bin/python")
+    assert plist["ProgramArguments"] == ["/venv/bin/python", "-m", "airec", "run", "--if-due"]
+    assert plist["StartInterval"] == 3600 and plist["RunAtLoad"] is True
+    assert plist["EnvironmentVariables"]["AIREC_HOME"] == str(settings.paths.home)
+    assert plistlib.loads(plistlib.dumps(plist))["Label"] == schedule.LABEL
+
+
+def test_cli_init_then_direction_listing(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIREC_HOME", str(tmp_path / "cli-home"))
+    runner = CliRunner()
+    assert runner.invoke(cli.app, ["init"]).exit_code == 0
+    listed = runner.invoke(cli.app, ["direction", "list"])
+    assert listed.exit_code == 0
+    assert "example" in listed.output
+
+
+def test_cli_explains_a_missing_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIREC_HOME", str(tmp_path / "nowhere"))
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exit_code == 1
+    assert "rec init" in result.output

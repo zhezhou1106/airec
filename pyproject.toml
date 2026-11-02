@@ -1,48 +1,48 @@
 [project]
 name = "airec"
-version = "0.2.0"
-description = "Personal research digest: collect widely, judge against an interest map, write a readable digest."
+version = "3.0.0"
+description = "A weekly AI briefing: trending repos, field news, and new papers on the directions you describe."
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "zhezhou1106" }]
-keywords = ["research", "arxiv", "llm", "recommender", "digest"]
+keywords = ["research", "arxiv", "llm", "digest", "github-trending"]
 requires-python = ">=3.11"
 dependencies = [
-    "httpx>=0.27",
-    "feedparser>=6.0",
-    "trafilatura>=1.9",
     "beautifulsoup4>=4.12",
+    "feedparser>=6.0",
+    "httpx>=0.27",
     "lxml>=5.0",
-    "numpy>=1.26",
-    "PyYAML>=6.0",
+    "pydantic>=2.7",
     "python-dotenv>=1.0",
+    "PyYAML>=6.0",
     "typer>=0.12",
-    "fastapi>=0.110",
-    "uvicorn>=0.30",
-    "jinja2>=3.1",
-    "python-multipart>=0.0.9",
-    "markdown-it-py>=3.0",
-    "ruamel.yaml>=0.18",
 ]
 
 [project.urls]
 Repository = "https://github.com/zhezhou1106/airec"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
-rec = "cli:app"
+rec = "airec.cli:app"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# The modules live directly in src/ (no package layer): src/ becomes the wheel's root.
-only-include = ["src"]
-sources = ["src"]
+packages = ["src/airec"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF012"] # Pydantic and Section class attributes are fine as they are
