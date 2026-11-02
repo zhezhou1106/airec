@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from airec import prompts
 from airec.config import Strict
 from airec.sections import register
-from airec.sections.base import Section, SectionResult, Window
+from airec.sections.base import Section, SectionError, SectionResult, Window
 from airec.sources import news
 from airec.sources.common import canonical_url
 from airec.sources.github import GitHub
@@ -44,7 +44,7 @@ class Brief(BaseModel):
 
 
 class Briefing(BaseModel):
-    stories: list[Brief] = Field(default_factory=list)
+    stories: list[Brief]
 
 
 @register
@@ -85,6 +85,8 @@ class AiNews(Section):
             brief for brief in briefing.stories if any(source in labels for source in brief.sources)
         ][: self.config.max_stories]
         if not briefs:
+            if briefing.stories:
+                raise SectionError("the editor cited no real candidate")
             return SectionResult("A quiet week: nothing notable made the cut.", stats=stats)
 
         self._remember(briefs)
@@ -151,7 +153,7 @@ class AiNews(Section):
             found += self.gather(
                 f"web search '{query}'",
                 lambda q=query: news.web_search(
-                    self.ctx.http, api_key, q, days, self.config.web_results
+                    self.ctx.http, api_key, q, days, self.config.web_results, window.until
                 ),
                 [],
             )
@@ -210,7 +212,11 @@ class AiNews(Section):
                 f"{label} ({story.source}{detail}, {story.published_at:%b %-d}): "
                 f"{story.title}\n    {summary}"
             )
-        earlier = self.ctx.store.get_state(self.key, "recent_headlines", [])
+        earlier = [
+            entry["headline"]
+            for entry in self.ctx.store.get_state(self.key, "recent_headlines", [])
+            if entry["week"] < self.ctx.week
+        ]
         system = prompts.render(
             "ai_news",
             reader=self.ctx.reader,
@@ -223,9 +229,11 @@ class AiNews(Section):
 
     def _remember(self, briefs: list[Brief]) -> None:
         """Keep headlines so a follow-up article is not reported as new next week."""
-        headlines = [brief.headline for brief in briefs]
-        earlier = self.ctx.store.get_state(self.key, "recent_headlines", [])
-        merged = list(dict.fromkeys(headlines + earlier))[:_REMEMBERED_HEADLINES]
+        week = self.ctx.week
+        kept = self.ctx.store.get_state(self.key, "recent_headlines", [])
+        kept = [entry for entry in kept if entry["week"] < week]
+        fresh = [{"week": week, "headline": brief.headline} for brief in briefs]
+        merged = (fresh + kept)[:_REMEMBERED_HEADLINES]
         self.ctx.store.set_state(self.key, "recent_headlines", merged)
 
     # ---- rendering ----

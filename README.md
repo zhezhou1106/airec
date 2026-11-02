@@ -54,7 +54,7 @@ rec init                        create ~/.airec (or $AIREC_HOME); never overwrit
 rec run                         generate this week's report
     --dry-run                   write a draft to reports/drafts; remember nothing
     --section papers            draft one section
-    --days 3                    cover the last N days
+    --days 3                    draft the last N days
     --if-due                    run only if this week's report is owed (the scheduler uses this)
 rec direction add|list|test     manage paper directions
 rec schedule install|uninstall  turn the weekly run on or off (macOS)
@@ -69,10 +69,11 @@ rec doctor                      check config, keys, models and sources
   when it next wakes.
 - **Failures are contained.** Each section runs on its own. A dead feed costs that feed, shown in
   the report's run notes. A failed section is marked in the report, its window stays uncovered, and
-  it is retried (up to `schedule.max_attempts` a week, then again next week).
+  only that section is retried (up to `schedule.max_attempts` a week, then again next week). State
+  is recorded after the report is written, so an interrupted run leaves nothing half-done.
 - **Nothing repeats.** Each section picks up where it last succeeded, up to
-  `report.max_window_days`, and anything shown is remembered. Re-running within a week rebuilds that
-  week's report.
+  `report.max_window_days`, and anything shown is remembered. A manual `rec run` rebuilds the
+  week's report; if a section fails during a rebuild, its earlier version is kept.
 - **It costs little.** Plans are cached per description and each paper is judged once per direction.
   Every report ends with its model usage; full prompts and replies are in `~/.airec/logs/`.
 
@@ -120,6 +121,8 @@ class Podcasts(Section):
     def run(self, window: Window) -> SectionResult:
         episodes = self.gather("feeds", lambda: fetch(self.config.feeds, window), [])
         self.require_sources()
+        seen = self.ctx.store.shown_before(self.key, [e.id for e in episodes], self.ctx.week)
+        episodes = [e for e in episodes if e.id not in seen]
         return SectionResult(
             markdown=render(episodes),
             highlights=[...],                  # bullets for "At a glance"
@@ -130,7 +133,8 @@ class Podcasts(Section):
 Then add a `podcasts:` block to `config.yaml`; its position there is its position in the report.
 The section gets the run's services through `self.ctx`: `llm`, `http`, `store` and `secrets`. It can
 keep small documents with `store.get_state` and `set_state`, or declare tables in `schema`. Windows,
-failure handling, retries and de-duplication come from the pipeline.
+failure handling, retries and recording `shown` come from the pipeline; the section filters
+against `shown_before` itself, because what counts as a repeat differs by section.
 
 ## Project layout
 

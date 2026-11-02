@@ -152,6 +152,11 @@ class Store:
             found.update({row["item_id"]: row["shown_at"] for row in rows})
         return found
 
+    def replace_shown(self, section: str, item_ids: Iterable[str], week: str) -> None:
+        """Set what this week's report shows, forgetting an earlier attempt's picks."""
+        self.execute("DELETE FROM shown WHERE section = ? AND week = ?", (section, week))
+        self.mark_shown(section, item_ids, week)
+
     def mark_shown(self, section: str, item_ids: Iterable[str], week: str) -> None:
         now = _now()
         self.executemany(

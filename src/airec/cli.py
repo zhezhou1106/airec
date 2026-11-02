@@ -56,7 +56,7 @@ def init() -> None:
 
 @app.command()
 def run(
-    days: Annotated[int | None, typer.Option(help="Cover the last N days instead.")] = None,
+    days: Annotated[int | None, typer.Option(help="Draft the last N days.")] = None,
     section: Annotated[str | None, typer.Option(help="Draft only this section.")] = None,
     dry_run: Annotated[bool, typer.Option(help="Write a draft; remember nothing.")] = False,
     if_due: Annotated[bool, typer.Option(help="Run only if this week's report is owed.")] = False,
@@ -71,7 +71,9 @@ def run(
         if not due or not pipeline.online():
             return
     try:
-        result = pipeline.generate(settings, days=days, only=section, dry_run=dry_run, now=now)
+        result = pipeline.generate(
+            settings, days=days, only=section, dry_run=dry_run, resume=if_due, now=now
+        )
     except pipeline.AlreadyRunning:
         typer.echo("Another run is in progress.")
         return

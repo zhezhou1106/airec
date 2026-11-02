@@ -71,7 +71,7 @@ class AppConfig(Strict):
     llm: LlmConfig
     report: ReportConfig = ReportConfig()
     schedule: ScheduleConfig = ScheduleConfig()
-    sections: dict[str, dict[str, Any]]  # report order; validated by each section
+    sections: dict[str, dict[str, Any] | None]  # report order; validated by each section
 
 
 @dataclass(frozen=True)

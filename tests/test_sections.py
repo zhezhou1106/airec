@@ -7,12 +7,15 @@ from datetime import timedelta
 import httpx
 import pytest
 
+from airec.http import Http
+from airec.llm import LlmError
 from airec.sections.ai_news import AiNews, _link_text
 from airec.sections.base import SectionError, Window
 from airec.sections.github_trends import GithubTrends
 from airec.sections.papers import Papers
 from airec.sections.papers.directions import Direction, load_directions, slugify
 from airec.sections.papers.plan import SearchPlan
+from airec.sources import news
 from airec.sources.news import Story
 from tests.conftest import NOW
 
@@ -155,13 +158,21 @@ def test_news_hides_shown_stories_and_tells_the_editor_past_headlines(make_conte
     web.route("lab.dev/feed", rss(("Old", "https://lab.dev/old"), ("New", "https://lab.dev/new")))
     web.route("api/models", [])
     store.mark_shown("ai_news", [Story("", "https://lab.dev/old", "", "", NOW).id], "2026-W44")
-    store.set_state("ai_news", "recent_headlines", ["Last week's story"])
+    store.set_state(
+        "ai_news",
+        "recent_headlines",
+        [
+            {"week": "2026-W44", "headline": "Last week's story"},
+            {"week": "2026-W45", "headline": "This week's own story"},
+        ],
+    )
     feeds = [{"name": "Lab", "url": "https://lab.dev/feed"}]
     section = news_section(make_context, lambda *_: {"stories": []}, feeds=feeds)
     section.run(WINDOW)
     _role, system, user = section.ctx.llm.prompts[0]
     assert "New" in user and "Old" not in user
     assert "Last week's story" in system
+    assert "This week's own story" not in system
 
 
 def test_news_survives_one_dead_source(make_context, web):
@@ -364,6 +375,64 @@ def test_candidate_cap_is_reported(make_context, web, settings):
     section = papers_section(make_context, paper_answers({}), max_candidates=1)
     section.run(WINDOW)
     assert any("too broad" in warning for warning in section.warnings)
+
+
+def test_wrongly_shaped_news_reply_is_a_failure_not_a_quiet_week(make_context, web):
+    web.route("lab.dev/feed", rss(("Real", "https://lab.dev/x")))
+    web.route("api/models", [])
+    feeds = [{"name": "Lab", "url": "https://lab.dev/feed"}]
+    section = news_section(make_context, lambda *_: {"items": []}, feeds=feeds)
+    with pytest.raises(LlmError):
+        section.run(WINDOW)
+
+
+def test_news_citing_only_invented_sources_fails(make_context, web):
+    web.route("lab.dev/feed", rss(("Real", "https://lab.dev/x")))
+    web.route("api/models", [])
+    invented = {
+        "stories": [{"category": "c", "headline": "h", "summary": "s", "sources": ["OpenAI"]}]
+    }
+    feeds = [{"name": "Lab", "url": "https://lab.dev/feed"}]
+    section = news_section(make_context, lambda *_: invented, feeds=feeds)
+    with pytest.raises(SectionError):
+        section.run(WINDOW)
+
+
+def test_web_dates_without_a_timezone_are_treated_as_utc(make_context, web):
+    web.route("api/models", [])
+    result = {
+        "title": "T",
+        "url": "https://a.dev/t",
+        "content": "c",
+        "published_date": "Sat, 31 Oct 2026 10:00:00",
+    }
+    undated = {"title": "U", "url": "https://a.dev/u", "content": "c"}
+    web.route("tavily.com", {"results": [result, undated]})
+    stories = news.web_search(Http(web), "key", "q", 7, 5, NOW)
+    assert WINDOW.contains(stories[0].published_at)
+    assert stories[1].published_at == NOW
+
+
+def test_papers_fail_when_arxiv_is_down_even_if_daily_papers_answer(make_context, web, settings):
+    add_direction(settings)
+    web.route("export.arxiv.org", lambda _r: httpx.Response(503))
+    web.route("daily_papers", [])
+    web.route("semanticscholar", lambda _r: httpx.Response(429))
+    with pytest.raises(SectionError, match="arXiv"):
+        papers_section(make_context, paper_answers({})).run(WINDOW)
+
+
+def test_papers_fail_when_too_many_judge_batches_fail(make_context, web, settings):
+    add_direction(settings)
+    route_papers(web, ("2610.00001", "One"))
+
+    def answer(role, system, user):
+        if "weekly literature tracker" in system:
+            return PLAN
+        return "not json"
+
+    with pytest.raises(SectionError, match="judge"):
+        papers_section(make_context, answer).run(WINDOW)
 
 
 def test_papers_use_daily_list_for_matches_and_signals(make_context, web, settings):

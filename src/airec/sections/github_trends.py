@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from airec import prompts
 from airec.config import Strict
 from airec.sections import register
-from airec.sections.base import Section, SectionResult, Window
+from airec.sections.base import Section, SectionError, SectionResult, Window
 from airec.sources.github import GitHub, Repo
 
 _README_CHARS = 1200
@@ -42,7 +42,7 @@ class RepoPick(BaseModel):
 
 class RepoSelection(BaseModel):
     trend: str = ""
-    picks: list[RepoPick] = Field(default_factory=list)
+    picks: list[RepoPick]
 
 
 @register
@@ -82,6 +82,8 @@ class GithubTrends(Section):
         picks = [pick for pick in selection.picks if pick.repo.lower() in by_name]
         picks = picks[: self.config.max_repos]
         if not picks:
+            if selection.picks:
+                raise SectionError("the model picked no real candidate")
             return SectionResult("No new AI repo stood out this week.", stats=stats)
         lines = [selection.trend.strip(), ""] if selection.trend.strip() else []
         lines += [_bullet(pick, by_name[pick.repo.lower()], gained, now) for pick in picks]

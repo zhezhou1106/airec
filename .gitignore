@@ -7,6 +7,10 @@ __pycache__/
 *.egg-info/
 dist/
 
+# never commit
+.env
+*.sqlite
+
 # local tools
 .claude/
 .DS_Store

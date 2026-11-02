@@ -25,6 +25,7 @@ class SectionOutcome:
     result: SectionResult | None = None
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    restored: bool = False  # reused from an earlier attempt this week
 
     @property
     def ok(self) -> bool:

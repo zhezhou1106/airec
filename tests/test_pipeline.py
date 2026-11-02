@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import plistlib
-from datetime import timedelta
+import time
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from typer.testing import CliRunner
@@ -72,6 +74,14 @@ def test_a_new_section_needs_only_a_class_and_a_config_block(probe_settings, web
     assert "## At a glance" in text and "- probe highlight" in text
 
 
+def test_section_without_options_needs_only_its_name(paths, web):
+    paths.config.write_text(paths.config.read_text() + "\n")
+    text = paths.config.read_text()
+    head = text[: text.index("sections:")]
+    paths.config.write_text(head + "sections:\n  probe:\n")
+    assert generate(load_settings(paths), web).status == "ok"
+
+
 def test_section_order_follows_config(paths, web):
     write_config(paths, steady={}, probe={})
     text = generate(load_settings(paths), web).path.read_text()
@@ -123,9 +133,78 @@ def test_window_starts_at_the_first_run_and_rerun_rebuilds_it(probe_settings, we
     assert Probe.windows[2].since == NOW + timedelta(hours=2) - timedelta(days=7)
 
 
-def test_days_override(probe_settings, web):
-    generate(probe_settings, web, days=3)
+def test_custom_span_is_only_a_draft(probe_settings, web):
+    result = generate(probe_settings, web, days=3)
     assert Probe.windows[0].since == NOW - timedelta(days=3)
+    assert result.path.parent.name == "drafts"
+
+
+def test_scheduled_retry_reruns_only_the_failed_section(probe_settings, web):
+    Probe.outcomes = [RuntimeError("down")]
+    first = generate(probe_settings, web)
+    assert first.status == "partial"
+    assert len(Probe.windows) == 2
+
+    retry = generate(probe_settings, web, now=NOW + timedelta(hours=1), resume=True)
+    assert retry.status == "ok"
+    assert len(Probe.windows) == 3  # probe again; steady reused
+    assert "item body" in retry.path.read_text().split("## Steady")[1]
+
+
+def test_failed_rebuild_keeps_the_good_version(probe_settings, web):
+    generate(probe_settings, web)
+    Probe.outcomes = [RuntimeError("down")]
+    rebuilt = generate(probe_settings, web, now=NOW + timedelta(hours=1))
+    text = rebuilt.path.read_text()
+    assert rebuilt.status == "ok"
+    assert "hello body" in text
+    assert "Rebuild failed" in text
+
+
+def test_rebuild_forgets_the_previous_attempts_picks(probe_settings, web):
+    generate(probe_settings, web)
+    store = Store(probe_settings.paths.db)
+    store.mark_shown("probe", ["dropped-by-rebuild"], "2026-W45")
+    store.close()
+    generate(probe_settings, web, now=NOW + timedelta(hours=1))
+    store = Store(probe_settings.paths.db)
+    assert "dropped-by-rebuild" not in store.shown_before(
+        "probe", ["dropped-by-rebuild"], "2026-W46"
+    )
+    assert "x" in store.shown_before("probe", ["x"], "2026-W46")
+    store.close()
+
+
+def test_interrupted_run_marks_nothing_covered(probe_settings, web, monkeypatch):
+    def crash(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("airec.report.deliver", crash)
+    with pytest.raises(OSError):
+        generate(probe_settings, web)
+    store = Store(probe_settings.paths.db)
+    assert store.last_covered("probe", "2026-W46") is None
+    assert store.shown_before("probe", ["x"], "2026-W46") == {}
+    store.close()
+
+
+def test_unserialisable_stats_fail_only_that_section(probe_settings, web):
+    original = Probe.run
+
+    def bad(self, window):
+        result = original(self, window)
+        result.stats = {"when": NOW}
+        return result
+
+    Steady.run = original
+    Probe.run = bad
+    try:
+        result = generate(probe_settings, web)
+    finally:
+        Probe.run = original
+        del Steady.run
+    assert result.status == "partial"
+    assert [outcome.ok for outcome in result.outcomes] == [False, True]
 
 
 def test_dry_run_leaves_no_trace(probe_settings, web):
@@ -217,6 +296,26 @@ def test_partial_runs_retry_up_to_the_limit(settings, store):
         assert due(settings, store, moment), attempt
         store.finish_run(store.start_run(week), "partial", "report.md", 0)
     assert not due(settings, store, moment)
+
+
+@pytest.fixture
+def new_york(monkeypatch):
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_week_and_slot_share_the_local_clock(settings, store, new_york):
+    # Sunday 19:00 in New York is already Monday in UTC.
+    sunday_evening = datetime(2026, 11, 8, 19, 0, tzinfo=ZoneInfo("America/New_York"))
+    assert sunday_evening.astimezone(UTC).isoweekday() == 1
+    store.finish_run(store.start_run("2026-W45"), "ok", "report.md", 0)
+    assert pipeline.iso_week(sunday_evening) == "2026-W45"
+    assert not due(settings, store, sunday_evening)
+    monday_morning = datetime(2026, 11, 9, 9, 30, tzinfo=ZoneInfo("America/New_York"))
+    assert due(settings, store, monday_morning)
 
 
 def test_online_is_false_on_network_errors():

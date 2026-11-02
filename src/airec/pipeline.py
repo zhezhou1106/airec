@@ -8,6 +8,7 @@ not marked as covered, so next week's run picks it up.
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import shutil
 import tempfile
@@ -16,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -24,7 +26,7 @@ from airec.config import ConfigError, Settings
 from airec.http import Http
 from airec.llm import Llm
 from airec.sections import build_sections
-from airec.sections.base import Context, Section, Window
+from airec.sections.base import Context, Section, SectionResult, Window
 from airec.store import Store
 
 log = logging.getLogger(__name__)
@@ -42,7 +44,8 @@ class RunResult:
 
 
 def iso_week(moment: datetime) -> str:
-    year, week, _ = moment.isocalendar()
+    """The ISO week on the local clock: the same clock as the schedule."""
+    year, week, _ = moment.astimezone().isocalendar()
     return f"{year}-W{week:02d}"
 
 
@@ -76,28 +79,77 @@ def run_sections(
     sections: list[Section],
     settings: Settings,
     store: Store,
-    run_id: int,
     week: str,
     now: datetime,
     days: int | None,
+    *,
+    resume: bool = False,
 ) -> list[report.SectionOutcome]:
+    """Run each section. Nothing here records the outcome: see `_commit`.
+
+    With `resume`, a section already done this week keeps its output instead of
+    running again. A section that fails falls back to this week's earlier output,
+    so a retry can never make the report worse.
+    """
     outcomes = []
     for section in sections:
+        saved = store.get_state(section.key, _output_key(week))
+        if resume and saved:
+            outcomes.append(_restored(section, saved))
+            continue
         window = section_window(settings, store, section.key, week, now, days)
         outcome = report.SectionOutcome(section.key, section.title, window)
         log.info("%s: %s", section.key, window.label)
         try:
-            outcome.result = section.run(window)
+            result = section.run(window)
+            _check_recordable(result)
+            outcome.result = result
         except ConfigError:
             raise
         except Exception as exc:
             log.exception("%s failed", section.key)
             outcome.error = f"{type(exc).__name__}: {exc}"[:300]
         outcome.warnings = section.warnings
-        result = outcome.result
+        if outcome.result is None and saved:
+            error = outcome.error
+            outcome = _restored(section, saved)
+            outcome.warnings = [*outcome.warnings, f"Rebuild failed, kept earlier version: {error}"]
+        log.info("%s: %s", section.key, outcome.result.stats if outcome.result else outcome.error)
+        outcomes.append(outcome)
+    return outcomes
+
+
+def _output_key(week: str) -> str:
+    return f"output:{week}"
+
+
+def _check_recordable(result: SectionResult) -> None:
+    """Catch a section's bad data while the failure can still be isolated to it."""
+    json.dumps(result.stats)
+    if not all(isinstance(item, str) for item in result.shown):
+        raise TypeError("SectionResult.shown must contain strings")
+
+
+def _restored(section: Section, saved: dict[str, Any]) -> report.SectionOutcome:
+    return report.SectionOutcome(
+        section.key,
+        section.title,
+        Window(datetime.fromisoformat(saved["since"]), datetime.fromisoformat(saved["until"])),
+        SectionResult(saved["markdown"], saved["highlights"], saved["shown"], saved["stats"]),
+        warnings=saved["warnings"],
+        restored=True,
+    )
+
+
+def _commit(store: Store, run_id: int, week: str, outcomes: list[report.SectionOutcome]) -> None:
+    """Record what the delivered report contains. A crash before this records nothing."""
+    for outcome in outcomes:
+        result, window = outcome.result, outcome.window
+        if outcome.restored:
+            continue
         store.record_section(
             run_id,
-            section.key,
+            outcome.key,
             "ok" if result else "failed",
             window.since,
             window.until,
@@ -105,10 +157,20 @@ def run_sections(
             outcome.error,
         )
         if result:
-            store.mark_shown(section.key, result.shown, week)
-        log.info("%s: %s", section.key, result.stats if result else outcome.error)
-        outcomes.append(outcome)
-    return outcomes
+            store.replace_shown(outcome.key, result.shown, week)
+            store.set_state(
+                outcome.key,
+                _output_key(week),
+                {
+                    "since": window.since.isoformat(),
+                    "until": window.until.isoformat(),
+                    "markdown": result.markdown,
+                    "highlights": result.highlights,
+                    "shown": result.shown,
+                    "stats": result.stats,
+                    "warnings": outcome.warnings,
+                },
+            )
 
 
 def generate(
@@ -117,6 +179,7 @@ def generate(
     days: int | None = None,
     only: str | None = None,
     dry_run: bool = False,
+    resume: bool = False,
     now: datetime | None = None,
     transport: httpx.BaseTransport | None = None,
     llm: Llm | None = None,
@@ -124,12 +187,13 @@ def generate(
     """Build this week's report and deliver it.
 
     A dry run works on a copy of the database and writes to reports/drafts, so it
-    leaves no trace in what later runs consider covered or shown. Running a single
-    section is always a dry run: it would otherwise replace the full report.
+    leaves no trace in what later runs consider covered or shown. Running one
+    section or a custom span is always a dry run: either would replace the full
+    report and leave part of the week uncovered.
     """
     now = now or datetime.now(UTC)
     week = iso_week(now)
-    dry_run = dry_run or only is not None
+    dry_run = dry_run or only is not None or days is not None
     paths = settings.paths
     paths.logs.mkdir(parents=True, exist_ok=True)
     trace = paths.logs / f"{week}.llm.jsonl"
@@ -145,7 +209,7 @@ def generate(
             raise ConfigError("No sections are enabled in config.yaml.")
 
         run_id = store.start_run(week)
-        outcomes = run_sections(sections, settings, store, run_id, week, now, days)
+        outcomes = run_sections(sections, settings, store, week, now, days, resume=resume)
         title = settings.app.report.title
         markdown = report.render(title, week, now.astimezone(), outcomes, ctx.llm.usage)
         folder = paths.drafts if dry_run else paths.reports
@@ -153,6 +217,7 @@ def generate(
         if dry_run:
             config = config.model_copy(update={"copy_to": None})
         path = report.deliver(markdown, folder, week, config)
+        _commit(store, run_id, week, outcomes)
 
         failures = sum(not outcome.ok for outcome in outcomes)
         status = "ok" if not failures else "failed" if failures == len(outcomes) else "partial"

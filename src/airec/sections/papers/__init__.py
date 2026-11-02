@@ -36,6 +36,7 @@ __all__ = ["DirectionScan", "Papers", "SearchPlan", "compile_plan"]
 _PHRASES_PER_QUERY = 6
 _ABSTRACT_CHARS = 1100
 _WORKERS = 4
+_MAX_FAILED_BATCHES = 4  # one in this many may fail before the section does
 _SCORE_TIE = 1.0  # scores this close are a tie between directions
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper_verdicts (
@@ -179,17 +180,24 @@ class Papers(Section):
     ) -> dict[str, Paper]:
         batches: list[list[Paper]] = []
         phrases = plan.phrases
+        limit = self.config.arxiv_per_query
         for start in range(0, len(phrases), _PHRASES_PER_QUERY):
             group = phrases[start : start + _PHRASES_PER_QUERY]
-            batches.append(
-                self.gather(
-                    f"arXiv search for {direction.id}",
-                    lambda g=group: self.arxiv.search(
-                        g, plan.categories, window.since, window.until, self.config.arxiv_per_query
-                    ),
-                    [],
-                )
+            found = self.gather(
+                f"arXiv search for {direction.id}",
+                lambda g=group: self.arxiv.search(
+                    g, plan.categories, window.since, window.until, limit
+                ),
+                None,
             )
+            if found is None:
+                continue
+            if len(found) >= limit:
+                self.warn(f"{direction.id}: an arXiv search hit its limit of {limit}")
+            batches.append(found)
+        if not batches:
+            # arXiv is the backbone: a thin report would mark this window as covered.
+            raise SectionError(f"arXiv did not answer for {direction.id}")
         batches.append(self._semantic_scholar(direction, phrases, window))
         batches.append([paper for paper in daily if plan.matches(paper.title, paper.abstract)])
 
@@ -213,17 +221,20 @@ class Papers(Section):
         """A bonus source: after its first refusal, leave it alone for the rest of the run."""
         if not self._s2_available:
             return []
-        seeds = self.ctx.store.get_state(self.key, f"seeds:{direction.id}", [])
         try:
             papers = self.s2.search(phrases, window.since, window.until)
             self.ctx.http.sleep(1.1)
-            if seeds:
-                papers += self.s2.recommend(seeds)
-                self.ctx.http.sleep(1.1)
         except Exception as exc:
             self._s2_available = False
             self.warn(f"Semantic Scholar unavailable, arXiv only: {str(exc)[:120]}")
             return []
+        seeds = self.ctx.store.get_state(self.key, f"seeds:{direction.id}", [])
+        if seeds:
+            try:
+                papers += self.s2.recommend(seeds)
+                self.ctx.http.sleep(1.1)
+            except Exception as exc:
+                self.warn(f"recommendations for {direction.id} failed: {str(exc)[:120]}")
         return papers
 
     def _judge(self, direction: Direction, plan: SearchPlan, papers: list[Paper]) -> list[Scored]:
@@ -264,8 +275,11 @@ class Papers(Section):
 
         with ThreadPoolExecutor(_WORKERS) as pool:
             new = [verdict for group in pool.map(judge, batches) for verdict in group]
-        if batches and failed == len(batches):
-            raise SectionError(f"could not judge any paper for {direction.id}")
+        if failed * _MAX_FAILED_BATCHES > len(batches):
+            # Unjudged papers would leave the window for good, so this week must be retried.
+            raise SectionError(f"{failed} of {len(batches)} judge batches failed: {direction.id}")
+        if len(new) < sum(len(batch) for batch in batches) - failed * size:
+            self.warn(f"{direction.id}: the judge skipped some papers")
         self.ctx.store.executemany(
             "INSERT OR REPLACE INTO paper_verdicts VALUES (?, ?, ?, ?, ?)",
             [(direction.id, direction.fingerprint, v.id, v.score, v.reason) for v in new],

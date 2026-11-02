@@ -154,7 +154,9 @@ def new_hf_models(http: Http, min_likes: int, since: datetime, until: datetime) 
     return stories
 
 
-def web_search(http: Http, api_key: str, query: str, days: int, limit: int) -> list[Story]:
+def web_search(
+    http: Http, api_key: str, query: str, days: int, limit: int, undated: datetime
+) -> list[Story]:
     """Recent news from Tavily, which reaches announcements that have no feed."""
     response = http.post(
         TAVILY,
@@ -169,14 +171,15 @@ def web_search(http: Http, api_key: str, query: str, days: int, limit: int) -> l
                 url=result.get("url") or "",
                 summary=(result.get("content") or "")[:800],
                 source="web",
-                published_at=_web_date(result.get("published_date")),
+                published_at=_web_date(result.get("published_date")) or undated,
             )
         )
     return stories
 
 
-def _web_date(value: str | None) -> datetime:
+def _web_date(value: str | None) -> datetime | None:
     try:
-        return parsedate_to_datetime(value or "")
+        parsed = parsedate_to_datetime(value or "")
     except (TypeError, ValueError):
-        return parse_iso(value) or datetime.now(UTC)
+        return parse_iso(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
