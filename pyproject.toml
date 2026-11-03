@@ -1,6 +1,6 @@
 [project]
 name = "airec"
-version = "3.0.0"
+version = "3.1.0"
 description = "A weekly AI briefing: trending repos, field news, and new papers on the directions you describe."
 readme = "README.md"
 license = "MIT"
