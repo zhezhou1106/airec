@@ -1,7 +1,7 @@
 // Vendored from MyHome (components/ui.tsx) by scripts/sync-hub-ui.mjs. Don't edit here.
 import { AlertTriangle, RotateCw, Search, X } from "lucide-react";
 import {
-  createContext, useCallback, useContext, useEffect, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode, type Ref,
+  createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode, type Ref,
 } from "react";
 import { cx } from "./format";
 import type { Status } from "./types";
@@ -358,6 +358,7 @@ export function Modal({
   onClose,
   children,
   wide,
+  size = wide ? "lg" : "md",
   className,
 }: {
   title?: ReactNode;
@@ -366,7 +367,10 @@ export function Modal({
   label?: string;
   onClose: () => void;
   children: ReactNode;
+  /** Same as size="lg". */
   wide?: boolean;
+  /** sm: a question (ConfirmDialog), md: a form, lg: a preview. */
+  size?: "sm" | "md" | "lg";
   className?: string;
 }) {
   useEffect(() => {
@@ -387,7 +391,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={label ?? (typeof title === "string" ? title : undefined)}
-        className={cx("glass-strong rise w-full rounded-card", wide ? "max-w-4xl" : "max-w-2xl", className)}
+        className={cx("glass-strong rise w-full rounded-card", { sm: "max-w-md", md: "max-w-2xl", lg: "max-w-4xl" }[size], className)}
       >
         {title !== undefined && (
           <header className="flex items-center gap-2 px-5 pt-4 pb-2">
@@ -402,6 +406,99 @@ export function Modal({
       </section>
     </div>
   );
+}
+
+// ── confirm and prompt dialogs (instead of the browser's confirm() / prompt()) ─────
+export interface ConfirmOptions {
+  title: string;
+  message?: ReactNode;
+  /** The button that goes ahead, e.g. "Run" or "Move to Trash". */
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** Draw the confirm button as destructive. */
+  danger?: boolean;
+}
+
+/** A small yes/no question over a scrim. Esc, a click outside or Cancel answers no. */
+export function ConfirmDialog({
+  title, message, confirmLabel = "OK", cancelLabel = "Cancel", danger, onConfirm, onCancel,
+}: ConfirmOptions & { onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <Modal title={title} onClose={onCancel} size="sm">
+      {message && <div className="text-sm text-fg2">{message}</div>}
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+        <Button variant={danger ? "danger" : "primary"} autoFocus onClick={onConfirm}>{confirmLabel}</Button>
+      </div>
+    </Modal>
+  );
+}
+
+export interface PromptOptions extends Omit<ConfirmOptions, "danger"> {
+  /** The field's starting text. */
+  value?: string;
+  placeholder?: string;
+  /** The field's accessible name; defaults to the title. */
+  label?: string;
+}
+
+/** A one-field form over a scrim. Enter or the confirm button answers with the text; Esc or Cancel with null. */
+export function PromptDialog({
+  title, message, confirmLabel = "OK", cancelLabel = "Cancel", value: initial = "", placeholder, label, onSubmit, onCancel,
+}: PromptOptions & { onSubmit: (value: string) => void; onCancel: () => void }) {
+  const [value, setValue] = useState(initial);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  return (
+    <Modal title={title} onClose={onCancel} size="sm">
+      <form onSubmit={(e) => { e.preventDefault(); onSubmit(value); }}>
+        {message && <div className="mb-3 text-sm text-fg2">{message}</div>}
+        <input ref={input} aria-label={label ?? title} className={inputClass} value={value} placeholder={placeholder} onChange={(e) => setValue(e.target.value)} />
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+          <Button type="submit" variant="primary">{confirmLabel}</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Ask a yes/no question and await the answer. Render the returned element somewhere in the component:
+ *   const [confirm, confirmDialog] = useConfirm();
+ *   if (!(await confirm({ title: "Delete it?", confirmLabel: "Delete", danger: true }))) return;
+ *   …  return <>{…}{confirmDialog}</>;
+ */
+export function useConfirm(): [(options: ConfirmOptions) => Promise<boolean>, ReactNode] {
+  const [ask, open, answer] = useAsk<ConfirmOptions, boolean>(false);
+  return [ask, open && <ConfirmDialog {...open} onConfirm={() => answer(true)} onCancel={() => answer(false)} />];
+}
+
+/** Ask for a line of text and await it (null when cancelled). Same shape as useConfirm. */
+export function usePrompt(): [(options: PromptOptions) => Promise<string | null>, ReactNode] {
+  const [ask, open, answer] = useAsk<PromptOptions, string | null>(null);
+  return [ask, open && <PromptDialog {...open} onSubmit={answer} onCancel={() => answer(null)} />];
+}
+
+/** The open question's options (null when none) and a promise for its answer; a new question answers the old one with `none`. */
+function useAsk<O, A>(none: A): [(options: O) => Promise<A>, O | null, (a: A) => void] {
+  const [open, setOpen] = useState<O | null>(null);
+  const resolve = useRef<((a: A) => void) | null>(null);
+  const answer = useCallback((a: A) => {
+    resolve.current?.(a);
+    resolve.current = null;
+    setOpen(null);
+  }, []);
+  const ask = useCallback((options: O) => {
+    resolve.current?.(none);
+    setOpen(options);
+    return new Promise<A>((r) => (resolve.current = r));
+  }, [none]);
+  useEffect(() => () => resolve.current?.(none), [none]);
+  return [ask, open, answer];
 }
 
 export function Field({ label, help, children }: { label: ReactNode; help?: ReactNode; children: ReactNode }) {
