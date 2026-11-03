@@ -121,10 +121,10 @@ export function Table({ value, onChange, columns, errors, path }: { value: Row[]
                   return (
                     <td key={c} className={cx("px-1.5 py-1", bools.has(c) && "text-center")} title={err}>
                       {bools.has(c) ? (
-                        <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={r[c] === true} aria-label={`${c} for row ${i + 1}`} onChange={(e) => set(i, c, e.target.checked)} />
+                        <input type="checkbox" className="size-4 accent-accent" checked={r[c] === true} aria-label={`${c} for row ${i + 1}`} onChange={(e) => set(i, c, e.target.checked)} />
                       ) : (
                         <input
-                          className={cx("focus-ring h-8 w-full rounded-[6px] bg-transparent px-1.5 text-fg hover:bg-material-soft", c === "url" && "font-mono text-[12px]", err && "ring-1 ring-danger")}
+                          className={cx("focus-ring h-8 w-full rounded-ctl bg-transparent px-1.5 text-fg hover:bg-material-soft", c === "url" && "font-mono text-[12px]", err && "ring-1 ring-danger")}
                           value={r[c] == null ? "" : String(r[c])}
                           aria-label={`${c} for row ${i + 1}`}
                           onChange={(e) => set(i, c, e.target.value)}

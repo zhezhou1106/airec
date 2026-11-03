@@ -33,6 +33,15 @@
   --heat-2: #8fb9d4;
   --heat-3: #6680a8;
   --heat-4: #404969;
+  --scrim: rgb(28 31 46 / 0.25);
+  --knob: #ffffff;
+  /* Calendar colours, by the names hub/widgets/calendar.py stores. */
+  --cal-coral: #ff7f50;
+  --cal-sky: #6fb8d9;
+  --cal-violet: #8e7cc3;
+  --cal-green: #4fae84;
+  --cal-amber: #e0a33a;
+  --cal-rose: #d9667f;
   --shadow: 0 1px 2px rgb(28 31 46 / 0.06), 0 8px 28px rgb(28 31 46 / 0.08);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable", "Segoe UI",
     system-ui, sans-serif;
@@ -61,6 +70,7 @@
     --heat-2: #52739b;
     --heat-3: #8fb9d4;
     --heat-4: #bde4f4;
+    --scrim: rgb(0 0 0 / 0.45);
     --shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 10px 32px rgb(0 0 0 / 0.28);
     color-scheme: dark;
   }
@@ -86,6 +96,7 @@
   --heat-2: #52739b;
   --heat-3: #8fb9d4;
   --heat-4: #bde4f4;
+  --scrim: rgb(0 0 0 / 0.45);
   --shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 10px 32px rgb(0 0 0 / 0.28);
   color-scheme: dark;
 }
@@ -118,6 +129,14 @@
   --heat-2: #17723f;
   --heat-3: #25ad5a;
   --heat-4: #3ddc84;
+  --scrim: rgb(1 4 9 / 0.6);
+  --knob: #e6edf3;
+  --cal-coral: #ff8a65;
+  --cal-sky: #22d3ee;
+  --cal-violet: #8b9cff;
+  --cal-green: #3ddc84;
+  --cal-amber: #ffb020;
+  --cal-rose: #f472b6;
   color-scheme: dark;
 }
 
@@ -147,6 +166,8 @@
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-magenta: var(--magenta);
+  --color-scrim: var(--scrim);
+  --color-knob: var(--knob);
   --font-sans: var(--font);
   --font-mono: var(--mono);
   --radius-card: var(--r-card);

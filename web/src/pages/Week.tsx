@@ -1,36 +1,37 @@
 import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, FolderOpen } from "lucide-react";
 import { ReportDoc } from "../components/ReportDoc";
-import { Button, Card, Empty, Spinner } from "../hub/ui";
+import { Button, Card, Empty, ErrorState, IconButton, Loading, useToast } from "../hub/ui";
 import { post } from "../lib/api";
 import { useWeek } from "../lib/hooks";
 
 /** One week's report, drawn exactly like the hub's Outputs viewer, with week-to-week navigation and the run notes. */
 export default function Week({ week, weeks, go }: { week: string; weeks: string[]; go: (path: string) => void }) {
-  const { data, error, isLoading } = useWeek(weeks.includes(week) ? week : undefined);
+  const { data, error, isLoading, isError, refetch } = useWeek(weeks.includes(week) ? week : undefined);
+  const toast = useToast();
   const at = weeks.indexOf(week);
   const earlier = at >= 0 ? weeks[at + 1] : undefined;
   const later = at > 0 ? weeks[at - 1] : undefined;
   const notes = data?.warnings ?? [];
 
   const bar = (
-    <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-2xl border border-hairline bg-[var(--paper)] px-2 py-1.5 shadow-sm">
+    <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 week-bar rounded-card border border-hairline px-2 py-1.5 shadow-sm">
       <Button size="sm" variant="ghost" onClick={() => go("weeks")}><ArrowLeft size={14} /> Weeks</Button>
       <span className="h-4 w-px bg-hairline" aria-hidden />
-      <Button size="sm" variant="ghost" className="px-1.5" aria-label="Earlier week" title={earlier ? `Earlier: ${earlier}` : "No earlier week"} disabled={!earlier} onClick={() => earlier && go(`weeks/${earlier}`)}>
+      <IconButton className="size-7" label="Earlier week" title={earlier ? `Earlier: ${earlier}` : "No earlier week"} disabled={!earlier} onClick={() => earlier && go(`weeks/${earlier}`)}>
         <ChevronLeft size={15} />
-      </Button>
+      </IconButton>
       <span className="tabular font-mono text-sm font-semibold text-fg">{week}</span>
       {at === 0 && <span className="text-xs text-fg3">latest</span>}
-      <Button size="sm" variant="ghost" className="px-1.5" aria-label="Later week" title={later ? `Later: ${later}` : "No later week"} disabled={!later} onClick={() => later && go(`weeks/${later}`)}>
+      <IconButton className="size-7" label="Later week" title={later ? `Later: ${later}` : "No later week"} disabled={!later} onClick={() => later && go(`weeks/${later}`)}>
         <ChevronRight size={15} />
-      </Button>
+      </IconButton>
       <div className="ml-auto flex items-center gap-1.5">
         {data && (
           <Button size="sm" variant="ghost" title="Jump to the run notes" onClick={() => document.getElementById("run-notes")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
             <AlertTriangle size={14} className={notes.length ? "text-warn" : undefined} /> Run notes{notes.length ? ` · ${notes.length}` : ""}
           </Button>
         )}
-        <Button size="sm" variant="ghost" title="Show the report file" disabled={at < 0} onClick={() => post("/api/reveal", { week })}>
+        <Button size="sm" variant="ghost" title="Show the report file" disabled={at < 0} onClick={() => post("/api/reveal", { week }).catch((e) => toast(`Couldn't show the report file: ${(e as Error).message}`, "error"))}>
           <FolderOpen size={14} /> Show file
         </Button>
       </div>
@@ -49,9 +50,9 @@ export default function Week({ week, weeks, go }: { week: string; weeks: string[
     <div className="flex min-w-0 flex-col gap-3">
       {bar}
       {isLoading ? (
-        <div className="py-10"><Spinner /></div>
-      ) : error || !data ? (
-        <Card><Empty icon={<AlertTriangle size={22} />}>{(error as Error)?.message ?? "Couldn't load this report."}</Empty></Card>
+        <Loading />
+      ) : isError || !data ? (
+        <Card><ErrorState what="this report" error={error} onRetry={() => refetch()} /></Card>
       ) : (
         <>
           {data.markdown ? <ReportDoc markdown={data.markdown} /> : <Card><Empty>The report file is empty.</Empty></Card>}

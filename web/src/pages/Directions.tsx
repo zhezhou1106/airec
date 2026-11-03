@@ -1,21 +1,19 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Compass, Pencil, Plus, Search, ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { textareaClass } from "../components/ConfigFields";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { cx } from "../hub/format";
-import { Button, Card, Empty, Field, Spinner, Toggle, useToast } from "../hub/ui";
+import { Button, Card, Empty, ErrorState, Field, Loading, Spinner, Toggle, useToast } from "../hub/ui";
 import { del, openUrl, post, put } from "../lib/api";
 import { useDirections } from "../lib/hooks";
 import type { Direction, Preview } from "../lib/types";
 
-const textareaClass =
-  "focus-ring w-full resize-y rounded-ctl border border-hairline bg-material-strong px-3 py-2 text-sm leading-relaxed text-fg placeholder:text-fg3";
-
 /** The paper directions: one card each, with the add form and the quality rules beside them. */
 export default function Directions() {
-  const { data, isLoading, error } = useDirections();
-  if (isLoading) return <div className="py-10"><Spinner /></div>;
-  if (error || !data) return <Card><Empty>{(error as Error)?.message ?? "Couldn't load the directions."}</Empty></Card>;
+  const { data, isLoading, isError, error, refetch } = useDirections();
+  if (isLoading) return <Loading />;
+  if (isError || !data) return <Card><ErrorState what="the directions" error={error} onRetry={() => refetch()} /></Card>;
   const active = data.directions.filter((d) => !d.paused).length;
 
   return (

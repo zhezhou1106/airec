@@ -3,7 +3,7 @@ import { AlertTriangle, CalendarClock, Cpu, FileText, Image, Info, Layers, Rotat
 import { useEffect, useState, type ReactNode } from "react";
 import { AnyField, NumberInput, Row, Switch, TextInput, textareaClass, type Errors } from "../components/ConfigFields";
 import { cx } from "../hub/format";
-import { Button, Card, Empty, Segmented, Spinner, inputClass, useToast } from "../hub/ui";
+import { Button, Card, ErrorState, Loading, Pill, Segmented, StatusDot, inputClass, useToast } from "../hub/ui";
 import { ApiError, put } from "../lib/api";
 import { useConfig } from "../lib/hooks";
 import type { ConfigData, Value } from "../lib/types";
@@ -34,9 +34,9 @@ export default function Config({ sub, go }: { sub: Sub; go: (path: string) => vo
 }
 
 function Editor({ sub }: { sub: Exclude<Sub, "directions"> }) {
-  const { data, error, isLoading } = useConfig();
-  if (isLoading) return <div className="py-10"><Spinner /></div>;
-  if (error || !data) return <Card><Empty icon={<AlertTriangle size={22} />}>{(error as Error)?.message ?? "Couldn't read config.yaml."}</Empty></Card>;
+  const { data, error, isLoading, isError, refetch } = useConfig();
+  if (isLoading) return <Loading />;
+  if (isError || !data) return <Card><ErrorState what="config.yaml" error={error} onRetry={() => refetch()} /></Card>;
   const Tab = { report: ReportTab, schedule: ScheduleTab, sections: SectionsTab, models: ModelsTab, cover: CoverTab }[sub];
   return <Tab key={sub} data={data} />;
 }
@@ -152,7 +152,7 @@ function ScheduleTab({ data }: { data: ConfigData }) {
       aside={
         <FileNote data={data}>
           <p className="flex items-center gap-2 font-medium text-fg">
-            <span className={cx("size-2 rounded-full", data.scheduled ? "bg-ok" : "bg-fg3")} /> {data.schedule_text}
+            <StatusDot status={data.scheduled ? "ok" : "stopped"} /> {data.schedule_text}
           </p>
           <p className="text-fg3">
             {data.scheduled
@@ -259,9 +259,7 @@ function ModelsTab({ data }: { data: ConfigData }) {
           <Row label="api_key_env" help="The environment variable that holds the key." error={err("providers", name, "api_key_env")}>
             <div className="flex flex-wrap items-center gap-3">
               <div className="max-w-72 flex-1"><TextInput mono value={draft.providers[name].api_key_env} placeholder="DEEPSEEK_API_KEY" onChange={(v) => setProvider(name, "api_key_env", v ?? "")} /></div>
-              <span className={cx("rounded-full px-2 py-0.5 text-xs font-medium", keySet[name] ? "bg-ok/15 text-ok" : "bg-warn/15 text-warn")}>
-                {keySet[name] ? "set" : "not set"}
-              </span>
+              <Pill tone={keySet[name] ? "ok" : "warn"}>{keySet[name] ? "set" : "not set"}</Pill>
             </div>
           </Row>
         </div>

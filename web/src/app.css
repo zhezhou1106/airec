@@ -1,6 +1,9 @@
 /* AI Weekly-only bits, written with the hub's tokens so every style tints them. */
 html, body, #root { min-height: 100%; }
 body { background: var(--bg); }
+
+/* The week page's sticky nav bar: solid, on the hub's page colour, so the report doesn't show through. */
+.week-bar { background: var(--paper); }
 html { scroll-padding-top: 16px; }
 
 /* Weeks gallery: a cover thumbnail, or the week number when there is none. */

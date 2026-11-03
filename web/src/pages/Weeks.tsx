@@ -1,14 +1,14 @@
-import { AlertTriangle, ChevronRight, Newspaper } from "lucide-react";
+import { ChevronRight, Newspaper } from "lucide-react";
 import { useState } from "react";
-import { Card, Empty, Spinner } from "../hub/ui";
+import { Card, Empty, ErrorState, Loading } from "../hub/ui";
 import { useWeeks } from "../lib/hooks";
 import type { WeekSummary } from "../lib/types";
 
 /** Every report, newest first, one full-width row each. A row opens that week's page. */
 export default function Weeks() {
-  const { data, error, isLoading } = useWeeks();
-  if (isLoading) return <div className="py-10"><Spinner /></div>;
-  if (error || !data) return <Card><Empty icon={<AlertTriangle size={22} />}>{(error as Error)?.message ?? "Couldn't load the weeks."}</Empty></Card>;
+  const { data, error, isLoading, isError, refetch } = useWeeks();
+  if (isLoading) return <Loading />;
+  if (isError || !data) return <Card><ErrorState what="the weeks" error={error} onRetry={() => refetch()} /></Card>;
   if (!data.weeks.length) {
     return (
       <Card>

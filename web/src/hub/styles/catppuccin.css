@@ -80,6 +80,14 @@
   --heat-2: color-mix(in srgb, var(--ctp-green) 55%, var(--ctp-base));
   --heat-3: color-mix(in srgb, var(--ctp-green) 80%, var(--ctp-base));
   --heat-4: var(--ctp-green);
+  --scrim: color-mix(in srgb, var(--ctp-crust) 65%, transparent);
+  --knob: var(--ctp-text);
+  --cal-coral: var(--ctp-peach);
+  --cal-sky: var(--ctp-sky);
+  --cal-violet: var(--ctp-lavender);
+  --cal-green: var(--ctp-green);
+  --cal-amber: var(--ctp-yellow);
+  --cal-rose: var(--ctp-pink);
   color-scheme: dark;
 }
 
@@ -90,5 +98,7 @@
   --warn: var(--ctp-peach);
   --text-3: var(--ctp-subtext0);
   --shadow: 0 1px 2px rgb(76 79 105 / 0.08);
+  --scrim: color-mix(in srgb, var(--ctp-text) 28%, transparent);
+  --knob: var(--ctp-base);
   color-scheme: light;
 }

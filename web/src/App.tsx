@@ -1,7 +1,7 @@
 import { FolderOpen } from "lucide-react";
 import { useEffect } from "react";
 import { AppShell } from "./hub/appshell";
-import { Button } from "./hub/ui";
+import { ErrorState, IconButton, Loading, useToast } from "./hub/ui";
 import { post } from "./lib/api";
 import { useHashRoute } from "./lib/hash";
 import { useOverview } from "./lib/hooks";
@@ -22,7 +22,8 @@ export default function App() {
   const tab: Tab = route[0] === "config" ? "config" : "weeks";
   const sub: Sub = SUBTABS.some((s) => s.value === route[1]) ? (route[1] as Sub) : "directions";
   const week = tab === "weeks" && route[0] === "weeks" ? route[1] : undefined;
-  const { data, error } = useOverview();
+  const { data, error, isError, refetch } = useOverview();
+  const toast = useToast();
   const weeks = data?.weeks ?? [];
   const latest = weeks[0];
 
@@ -67,16 +68,30 @@ export default function App() {
       wide={!!week}
       actions={
         folder && (
-          <Button variant="ghost" aria-label={`Show the ${folder} folder`} title={`Show the ${folder} folder`} onClick={() => post("/api/reveal", { folder })}>
+          <IconButton
+            label={`Show the ${folder} folder`}
+            onClick={() => post("/api/reveal", { folder }).catch((e) => toast(`Couldn't show the ${folder} folder: ${(e as Error).message}`, "error"))}
+          >
             <FolderOpen size={15} />
-          </Button>
+          </IconButton>
         )
       }
       tabs={[...TABS]}
       tab={tab}
       onTab={(t) => go(t === "config" ? `config/${sub}` : t)}
     >
-      {tab === "weeks" && (week ? data ? <Week week={week} weeks={weeks} go={go} /> : null : <Weeks />)}
+      {tab === "weeks" &&
+        (week ? (
+          data ? (
+            <Week week={week} weeks={weeks} go={go} />
+          ) : isError ? (
+            <ErrorState what="airec's overview" error={error} onRetry={() => refetch()} />
+          ) : (
+            <Loading />
+          )
+        ) : (
+          <Weeks />
+        ))}
       {tab === "config" && <Config sub={sub} go={go} />}
     </AppShell>
   );
