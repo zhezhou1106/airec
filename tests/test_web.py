@@ -78,28 +78,15 @@ def test_appearance_falls_back_when_the_hub_is_away(client, monkeypatch):
     assert client.get("/api/appearance").json()["style"] == "terminal"
 
 
-def test_week_report_has_sections_highlights_and_notes(client, settings):
+def test_week_report_is_the_file_with_the_stored_run_notes(client, settings):
     saved_week(settings)
     overview = client.get("/api/overview").json()
     assert overview["weeks"] == ["2026-W45"]
     assert overview["schedule"] == "Every Monday from 9:00"
     report = client.get("/api/weeks/2026-W45").json()
-    [section] = report["sections"]
-    assert section["title"] == "Papers on your directions"
-    assert section["markdown"].startswith("### Topic")
-    assert "<script>x" not in section["html"]
-    assert report["highlights"] == ["Topic: [A paper](https://arxiv.org/abs/1)"]
+    assert set(report) == {"week", "markdown", "warnings", "file"}
+    assert report["markdown"] == "# report\n"
     assert report["warnings"] == ["a feed was down"]
-    assert report["window"] and report["raw"] == ""
-    assert report["cover"] is None
-
-
-def test_report_without_sections_falls_back_to_the_file(client, settings):
-    text = "---\nweek: 2026-W40\n---\n\n# AI Weekly\n\nBody text\n\n---\nfooter"
-    (settings.paths.reports / "2026-W40.md").write_text(text)
-    report = client.get("/api/weeks/2026-W40").json()
-    assert report["sections"] == []
-    assert report["raw"] == "# AI Weekly\n\nBody text"
 
 
 def test_no_reports_yet(client):
@@ -120,7 +107,8 @@ def test_cover_image_is_served_by_name_only(client, settings):
     saved_week(settings)
     (settings.paths.reports / "assets").mkdir()
     (settings.paths.reports / "assets" / "2026-W45.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-    assert client.get("/api/weeks/2026-W45").json()["cover"] == "/api/assets/2026-W45.png"
+    [week] = client.get("/api/weeks").json()["weeks"]
+    assert week["cover"] == "/api/assets/2026-W45.png"
     assert client.get("/api/assets/2026-W45.png").status_code == 200
     assert client.get("/api/assets/..%2F2026-W45.md").status_code == 404
 
@@ -295,7 +283,6 @@ def test_week_exposes_the_report_file_for_the_shared_renderer(client, settings):
     (settings.paths.reports / "2026-W44.md").write_text(DIGEST)
     report = client.get("/api/weeks/2026-W44").json()
     assert report["markdown"] == DIGEST
-    assert report["window"] == "Oct 19 to Oct 26, 2026"
     # No sections in the database: the run notes come from the file's footer.
     assert report["warnings"] == ["news: a feed was down"]
 

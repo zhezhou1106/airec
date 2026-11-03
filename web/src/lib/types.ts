@@ -3,28 +3,13 @@ export interface Overview {
   weeks: string[];
   schedule: string;
   scheduled: boolean;
-  reports_dir: string;
-  hub: boolean;
-}
-export interface Section {
-  key: string;
-  title: string;
-  markdown: string;
-  highlights: string[];
-  stats: Record<string, unknown>;
-  warnings: string[];
-  window: string;
 }
 export interface WeekReport {
   week: string;
-  window: string | null;
-  sections: Section[];
-  highlights: string[];
-  warnings: string[];
-  raw: string;
   /** The report file as written, front matter included: what the shared renderer draws. */
   markdown: string;
-  cover: string | null;
+  /** The run notes: from the database's section outputs, else the file's footer. */
+  warnings: string[];
   file: string;
 }
 /** One row of the Weeks gallery. */

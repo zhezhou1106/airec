@@ -27,14 +27,12 @@ import yaml
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from markdown_it import MarkdownIt
 from pydantic import ValidationError
 from ruamel.yaml.error import YAMLError as RuamelYAMLError
 
 from airec import __version__, pipeline, schedule
 from airec.config import ConfigError, Settings, load_settings
 from airec.llm import LlmError
-from airec.sections import available
 from airec.sections.base import SectionError, Window
 from airec.sections.papers import Papers
 from airec.sections.papers.directions import (
@@ -63,62 +61,23 @@ _CONFIG_VALUES = Body(embed=True)
 _WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
-def _markdown() -> MarkdownIt:
-    """Report text comes from models reading the web, so raw HTML stays off."""
-    md = MarkdownIt("commonmark", {"html": False, "linkify": False, "breaks": False})
-
-    def open_in_new_tab(renderer, tokens, index, options, env):
-        tokens[index].attrSet("target", "_blank")
-        tokens[index].attrSet("rel", "noopener")
-        return renderer.renderToken(tokens, index, options, env)
-
-    md.add_render_rule("link_open", open_in_new_tab)
-    return md
-
-
 class ReportView:
     """Reports and run state, read fresh for each request."""
 
     def __init__(self, settings: Settings, store: Store):
         self.settings = settings
         self.store = store
-        self.md = _markdown()
 
     def weeks(self) -> list[str]:
         return sorted((p.stem for p in self.settings.paths.reports.glob("*.md")), reverse=True)
 
-    def sections(self, week: str) -> list[dict[str, Any]]:
-        registry = available()
-        found = []
-        for key in self.settings.app.sections:
-            output = self.store.get_state(key, f"output:{week}")
-            if not output:
-                continue
-            found.append(
-                {
-                    "key": key,
-                    "title": registry[key].title if key in registry else key,
-                    "markdown": output["markdown"],
-                    "html": self.md.render(output["markdown"]),
-                    "highlights": output["highlights"],
-                    "stats": output["stats"],
-                    "warnings": output["warnings"],
-                    "window": Window(
-                        datetime.fromisoformat(output["since"]),
-                        datetime.fromisoformat(output["until"]),
-                    ).label,
-                }
-            )
-        return found
-
-    def raw_report(self, week: str) -> str:
-        """A report the database has no sections for: the file's body, as markdown."""
-        path = self.settings.paths.reports / f"{week}.md"
-        if not path.exists():
-            return ""
-        text = path.read_text(encoding="utf-8")
-        body = text.split("---", 2)[-1] if text.startswith("---") else text
-        return body.split("\n---\n")[0].strip()
+    def section_warnings(self, week: str) -> list[str] | None:
+        """The run notes the database kept for `week`, or None if it has no sections for it."""
+        keys = self.settings.app.sections
+        found = [o for o in (self.store.get_state(k, f"output:{week}") for k in keys) if o]
+        if not found:
+            return None
+        return [w for output in found for w in output["warnings"]]
 
     def report_path(self, week: str) -> Path:
         return self.settings.paths.reports / f"{week}.md"
@@ -157,21 +116,13 @@ class ReportView:
         }
 
     def report(self, week: str) -> dict[str, Any]:
-        """Everything the reading view shows for one week."""
-        sections = self.sections(week)
+        """What the reading view shows for one week: the file, and its run notes."""
         text = self.text(week)
-        warnings = [w for section in sections for w in section["warnings"]]
-        if not sections:
-            warnings = _run_notes(text)
+        warnings = self.section_warnings(week)
         return {
             "week": week,
-            "window": sections[0]["window"] if sections else self.summary(week)["window"],
-            "sections": sections,
-            "highlights": [h for section in sections for h in section["highlights"]],
-            "warnings": warnings,
-            "raw": "" if sections else self.raw_report(week),
+            "warnings": _run_notes(text) if warnings is None else warnings,
             "markdown": text,
-            "cover": self.cover(week, text),
             "file": str(self.report_path(week)),
         }
 
@@ -230,8 +181,6 @@ def create_app(settings: Settings) -> FastAPI:
             "weeks": weeks,
             "schedule": plan,
             "scheduled": plan != "Schedule is off",
-            "reports_dir": str(settings.paths.reports),
-            "hub": bool(_hub_api()),
         }
 
     @app.get("/api/weeks")
