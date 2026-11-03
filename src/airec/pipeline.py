@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from airec import cover, report
+from airec import cover, glance, report
 from airec.config import ConfigError, Settings
 from airec.http import Http
 from airec.llm import Llm
@@ -172,7 +172,8 @@ def _commit(store: Store, run_id: int, week: str, outcomes: list[report.SectionO
     for outcome in outcomes:
         result, window = outcome.result, outcome.window
         if outcome.restored:
-            if outcome.error:  # a failed rebuild that fell back: record the failure, keep the old output
+            # A failed rebuild that fell back: record the failure, keep the old output.
+            if outcome.error:
                 store.record_section(
                     run_id, outcome.key, "failed", window.since, window.until, {}, outcome.error
                 )
@@ -246,7 +247,10 @@ def generate(
         try:
             outcomes = run_sections(sections, settings, store, week, now, days, resume=resume)
             title = settings.app.report.title
-            markdown = report.render(title, week, now.astimezone(), outcomes, ctx.llm.usage)
+            opening = write_glance(ctx, outcomes)
+            markdown = report.render(
+                title, week, now.astimezone(), outcomes, ctx.llm.usage, opening
+            )
             folder = paths.drafts if dry_run else paths.reports
             config = settings.app.report
             if dry_run:
@@ -278,6 +282,19 @@ def generate(
         note = f"{week} is ready" if status == "ok" else f"{week}: {failures} section(s) failed"
         report.notify(title, note, link)
     return RunResult(path, status, outcomes, cover_state)
+
+
+def write_glance(ctx: Context, outcomes: list[report.SectionOutcome]) -> str | None:
+    """The At a glance analysis. Never raises: the plain highlights stand in for it."""
+    spans = [o.window for o in outcomes if o.result]
+    if not spans:
+        return None
+    window = Window(min(w.since for w in spans), max(w.until for w in spans)).label
+    try:
+        return glance.write(ctx.llm, ctx.reader, window, outcomes)
+    except Exception as exc:  # a missing analysis must never cost the report
+        log.warning("glance failed, using plain highlights: %s", exc)
+        return None
 
 
 def add_cover(settings: Settings, path: Path, week: str) -> str:

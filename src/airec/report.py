@@ -41,7 +41,12 @@ class SectionOutcome:
 
 
 def render(
-    title: str, week: str, generated: datetime, outcomes: list[SectionOutcome], usage: Usage
+    title: str,
+    week: str,
+    generated: datetime,
+    outcomes: list[SectionOutcome],
+    usage: Usage,
+    glance: str | None = None,
 ) -> str:
     spans = [outcome.window for outcome in outcomes]
     covered = Window(min(w.since for w in spans), max(w.until for w in spans)).label
@@ -58,7 +63,9 @@ def render(
         "",
     ]
     highlights = [h for o in outcomes if o.result for h in o.result.highlights]
-    if highlights:
+    if glance:  # the written analysis; the plain highlights are its fallback
+        lines += ["## At a glance", "", glance.strip(), ""]
+    elif highlights:
         lines += ["## At a glance", ""]
         lines += [f"- {highlight}" for highlight in highlights]
         lines.append("")

@@ -15,6 +15,10 @@ categories and criteria and scores each new paper against your description. A se
 model then checks the shortlist against written quality rules and keeps at most five, or none in
 a weak week, with a short takeaway for each. Papers it keeps improve next week's recommendations.
 
+The report opens with **At a glance**: once the sections are done, one writer call reads them all and
+writes a paragraph on the repos, one on the news and one per paper direction, connecting them. If that
+call fails, the report falls back to each section's plain highlights.
+
 ## Setup
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
@@ -209,7 +213,7 @@ class Podcasts(Section):
         episodes = [e for e in episodes if e.id not in seen]
         return SectionResult(
             markdown=render(episodes),
-            highlights=[...],                  # bullets for "At a glance"
+            highlights=[...],                  # fallback bullets for "At a glance"
             shown=[e.id for e in episodes],    # not to repeat next week
         )
 ```
