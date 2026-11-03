@@ -112,7 +112,8 @@ def plain(node: Any) -> Any:
 
 
 def snapshot(paths: Paths) -> dict[str, Any]:
-    """What the Configuration tabs show. Typed blocks include their defaults."""
+    """What the Configuration tabs show. Every block includes its defaults; a section's
+    `values` are the file's values over its Config defaults (saving writes only changes)."""
     text = paths.config.read_text(encoding="utf-8")
     doc = load(text)
     raw = yaml.safe_load(text) or {}
@@ -127,7 +128,7 @@ def snapshot(paths: Paths) -> dict[str, Any]:
         {
             "key": key,
             "title": registry[key].title if key in registry else key,
-            "values": plain(block) if isinstance(block, dict) else {},
+            "values": _section_values(registry, key, block),
         }
         for key, block in (doc.get("sections") or {}).items()
     ]
@@ -147,6 +148,18 @@ def snapshot(paths: Paths) -> dict[str, Any]:
         ],
     }
     return out
+
+
+def _section_values(registry: dict[str, Any], key: str, block: Any) -> dict[str, Any]:
+    """A section's effective settings: the file's values over the section's defaults."""
+    explicit = plain(block) if isinstance(block, dict) else {}
+    if key not in registry:
+        return explicit
+    try:
+        defaults = registry[key].Config().model_dump(mode="json")
+    except ValidationError:  # a section whose settings have no defaults shows only the file
+        return explicit
+    return {"enabled": True, **defaults, **explicit}
 
 
 # ── changing ─────────────────────────────────────────────────────────────────
@@ -259,15 +272,20 @@ def apply(paths: Paths, part: str, values: dict[str, Any], text: str) -> Comment
             if key in values and values[key] != current[key]:
                 assign(block, key, values[key])
     elif part == "sections":
+        # Compared with the effective values, so a default the file leaves out stays out.
         sections = _block(doc, "sections")
+        current = {s["key"]: s["values"] for s in snapshot(paths)["sections"]}
         for key, block in values.items():
             if key not in sections:
                 raise Invalid([{"loc": ["sections", key], "msg": "Unknown section."}])
             if not isinstance(block, dict):
                 raise Invalid([{"loc": ["sections", key], "msg": "Expected settings."}])
-            if sections[key] is None:
-                sections[key] = CommentedMap()
             for field, value in block.items():
+                written = isinstance(sections[key], CommentedMap) and field in sections[key]
+                if not written and value == current[key].get(field):
+                    continue
+                if not isinstance(sections[key], CommentedMap):
+                    sections[key] = CommentedMap()
                 assign(sections[key], field, value)
     elif part == "models":
         # Compared with the effective values, so a default the file leaves out stays out.

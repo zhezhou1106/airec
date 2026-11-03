@@ -39,7 +39,8 @@ export default function Directions() {
           </ol>
           <p className="mt-3 text-xs text-fg3">
             Papers need a relevance score of {Math.round(data.papers.min_score)} or more to reach these rules. Change them
-            under <code>papers</code> in config.yaml.
+            on the <a className="text-accent-text underline" href="#/config/sections">Sections</a> tab
+            (<code>sections.papers</code> in config.yaml).
           </p>
         </Card>
       </aside>

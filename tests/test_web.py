@@ -10,6 +10,7 @@ from airec.config import DEFAULTS
 from airec.sections.papers.directions import load_directions
 from airec.store import Store
 from airec.web import create_app
+from tests.conftest import write_config
 
 ORIGIN = {"Origin": "http://127.0.0.1:8000"}
 
@@ -431,3 +432,35 @@ def test_preview_and_cli_test_use_the_run_path(settings, monkeypatch):
     result = CliRunner().invoke(cli.app, ["direction", "test", "ttt", "--days", "5"])
     assert result.exit_code == 0, result.output
     assert calls == [("ttt", 14), ("ttt", 5)]
+
+
+def test_config_sections_show_defaults_but_save_only_changes(client, settings, commented):
+    sections = {s["key"]: s["values"] for s in client.get("/api/config").json()["sections"]}
+    papers = sections["papers"]
+    # Defaults the file leaves out are shown; the file's own values win.
+    assert papers["max_shortlist"] == 15 and papers["judge_batch"] == 15
+    assert papers["quality_rules"] and papers["enabled"] is True
+    assert papers["max_papers"] == 5 and papers["min_score"] == 8
+    assert next(iter(papers)) == "enabled"
+
+    papers["judge_batch"] = 20
+    reply = put_config(client, "sections", sections)
+    assert reply.status_code == 200 and reply.json()["changed"] is True
+    after = settings.paths.config.read_text()
+    added = [line for line in after.splitlines() if line not in commented.splitlines()]
+    assert added == ["    judge_batch: 20"]
+    shown = {s["key"]: s["values"] for s in reply.json()["config"]["sections"]}
+    assert shown["papers"]["judge_batch"] == 20
+
+
+def test_config_section_without_settings_gets_a_block_only_when_changed(client, settings):
+    write_config(settings.paths, papers=None)
+    before = settings.paths.config.read_text()
+    assert "  papers: null\n" in before
+    sections = {s["key"]: s["values"] for s in client.get("/api/config").json()["sections"]}
+    assert sections["papers"]["max_papers"] == 5
+    assert put_config(client, "sections", sections).json()["changed"] is False
+    assert settings.paths.config.read_text() == before
+    sections["papers"]["max_papers"] = 3
+    assert put_config(client, "sections", sections).json()["changed"] is True
+    assert "max_papers: 3" in settings.paths.config.read_text()
