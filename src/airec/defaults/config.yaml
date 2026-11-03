@@ -23,6 +23,12 @@ report:
   link: null                # what the notification opens; null is the file itself, or a URL
                             # with {path}, e.g. http://127.0.0.1:7777/#/app/airec/outputs/{path}
 
+cover:
+  enabled: false            # true: after the text is written, Codex draws an overview image
+  # model: gpt-5.6-terra    # default: Codex's own model from ~/.codex/config.toml
+  reasoning: medium
+  timeout: 900              # seconds
+
 schedule:
   weekday: 1                # ISO weekday; 1 is Monday
   hour: 9                   # local time; if the Mac is off, the run happens at next wake

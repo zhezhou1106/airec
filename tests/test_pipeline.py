@@ -157,9 +157,26 @@ def test_failed_rebuild_keeps_the_good_version(probe_settings, web):
     Probe.outcomes = [RuntimeError("down")]
     rebuilt = generate(probe_settings, web, now=NOW + timedelta(hours=1))
     text = rebuilt.path.read_text()
-    assert rebuilt.status == "ok"
+    assert rebuilt.status == "partial"  # the content survives, but the rebuild still failed
     assert "hello body" in text
     assert "Rebuild failed" in text
+    store = Store(probe_settings.paths.db)
+    failed = store.db.execute(
+        "SELECT error FROM section_runs WHERE section = 'probe' AND status = 'failed'"
+    ).fetchall()
+    store.close()
+    assert len(failed) == 1 and "down" in failed[0]["error"]
+
+
+def test_a_killed_run_is_not_left_running(probe_settings, web):
+    store = Store(probe_settings.paths.db)
+    store.start_run("2026-W45")  # never finished: its process was killed
+    store.close()
+    generate(probe_settings, web)
+    store = Store(probe_settings.paths.db)
+    statuses = [row["status"] for row in store.recent_runs()]
+    store.close()
+    assert "running" not in statuses
 
 
 def test_rebuild_forgets_the_previous_attempts_picks(probe_settings, web):
@@ -412,3 +429,31 @@ def test_cli_explains_a_missing_home(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli.app, ["status"])
     assert result.exit_code == 1
     assert "rec init" in result.output
+
+
+def _with_cover(settings, tmp_path, body):
+    from tests.test_cover import fake_codex
+
+    app = settings.app.model_copy(update={"cover": fake_codex(tmp_path, body)})
+    return type(settings)(settings.paths, app)
+
+
+def test_cover_is_attached_after_the_text(probe_settings, web, tmp_path):
+    settings = _with_cover(probe_settings, tmp_path, f"cp {tmp_path}/image.png overview.png")
+    result = generate(settings, web)
+    assert result.cover == "ok"
+    assert "![AI Weekly 2026-W45 overview](assets/2026-W45.png)" in result.path.read_text()
+    assert (settings.paths.assets / "2026-W45.png").exists()
+
+
+def test_a_failed_cover_never_fails_the_report(probe_settings, web, tmp_path):
+    settings = _with_cover(probe_settings, tmp_path, "exit 3")
+    result = generate(settings, web)
+    assert result.status == "ok"
+    assert result.cover.startswith("failed")
+    assert "overview" not in result.path.read_text()
+
+
+def test_drafts_get_no_cover(probe_settings, web, tmp_path):
+    settings = _with_cover(probe_settings, tmp_path, f"cp {tmp_path}/image.png overview.png")
+    assert generate(settings, web, dry_run=True).cover is None

@@ -82,6 +82,10 @@ class Store:
     # ---- runs ----
 
     def start_run(self, week: str) -> int:
+        # Callers hold the run lock, so a run still marked running was killed mid-way.
+        self.execute(
+            "UPDATE runs SET status = 'failed', finished_at = ? WHERE status = 'running'", (_now(),)
+        )
         cursor = self.execute("INSERT INTO runs (week, started_at) VALUES (?, ?)", (week, _now()))
         return int(cursor.lastrowid or 0)
 

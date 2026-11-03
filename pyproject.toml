@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.7",
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
+    "ruamel-yaml>=0.18",
     "typer>=0.12",
     "uvicorn>=0.30",
 ]

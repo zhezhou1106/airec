@@ -85,6 +85,8 @@ def run(
     for outcome in result.outcomes:
         state = outcome.result.stats if outcome.result else f"FAILED: {outcome.error}"
         typer.echo(f"  {outcome.key}: {state}")
+    if result.cover:
+        typer.echo(f"  cover: {result.cover}")
     typer.echo(f"{result.status}: {result.path}")
     if result.status == "failed":
         raise typer.Exit(1)
@@ -190,6 +192,30 @@ def schedule_uninstall() -> None:
 
 
 # ---- inspection ----
+
+
+@app.command("cover")
+def cover_command(
+    week: Annotated[
+        str | None, typer.Option(help="e.g. 2026-W45; default the latest report.")
+    ] = None,
+) -> None:
+    """(Re)draw the overview image for a report with Codex."""
+    settings = _settings()
+    reports = settings.paths.reports
+    path = reports / f"{week}.md" if week else max(reports.glob("*.md"), default=None)
+    if not path or not path.exists():
+        typer.secho("No such report.", fg="red", err=True)
+        raise typer.Exit(1)
+    try:
+        with pipeline._exclusive(settings.paths.lock):
+            state = pipeline.add_cover(settings, path, path.stem)
+    except pipeline.AlreadyRunning:
+        typer.echo("Another run is in progress.")
+        raise typer.Exit(1) from None
+    typer.echo(f"cover: {state}")
+    if state.startswith("failed"):
+        raise typer.Exit(1)
 
 
 @app.command()

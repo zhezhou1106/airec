@@ -63,6 +63,7 @@ class ScriptedLlm(Llm):
 def write_config(paths: Paths, **sections: object) -> None:
     raw = yaml.safe_load((DEFAULTS / "config.yaml").read_text())
     raw["report"]["notify"] = False
+    raw["cover"]["enabled"] = False
     if sections:
         raw["sections"] = sections
     paths.config.write_text(yaml.safe_dump(raw, sort_keys=False))

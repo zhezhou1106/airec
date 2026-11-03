@@ -39,12 +39,37 @@ report; with `brew install terminal-notifier`, clicking it opens the report, or 
 
 ## The app
 
-`rec serve` opens a small app for reading and steering, styled to match
-[my-hub](#using-it-with-my-hub):
+`rec serve` opens a small app for reading and steering. Inside [my-hub](#using-it-with-my-hub)
+it looks like one of the hub's own pages and follows its style:
 
-- **This week:** the report as cards, with earlier weeks one click away.
-- **Directions:** add, edit, pause or remove a direction, see its search plan, and **Preview** what
-  it would catch in the last two weeks, without recording anything.
+- **Weeks:** every report, newest first, one row each: the date window, the first highlights,
+  the sections with their item counts and the cover, if the week has one. A row opens that week
+  (`#/weeks/2026-W45`), drawn by the hub's own report renderer so it looks exactly like the hub's
+  Outputs viewer, with earlier/later week buttons, the run notes and the report file.
+- **Configuration:** **Directions** (add, edit, pause or remove a direction, see its search plan,
+  and **Preview** what it would catch in the last two weeks, without recording anything), then
+  **Report**, **Schedule**, **Sections**, **Models** and **Cover**, which edit `config.yaml`. A save
+  writes only the values you changed, keeps the file's comments and layout, is checked against the
+  same models `rec` uses (nothing is written if it is invalid), and keeps the previous file as
+  `config.yaml.bak-<time>` (the last five). Models show the *name* of each key's variable and
+  whether it is set, never the key. The schedule needs no reinstall: the agent wakes hourly and
+  reads it each time.
+
+The page is a small React app in `web/`, built into `src/airec/web/static/` (the build is
+kept in the repo, so installing airec needs no Node). It uses the hub's own design layer, copied into
+`web/src/hub/` by `web/scripts/sync-hub-ui.mjs`: the same page frame (`AppShell`) as the hub's
+other app pages, and the same report renderer (`report.tsx`) as the hub's Outputs viewer. After changing it, or after the hub's design changes:
+
+```bash
+npm --prefix web ci
+npm --prefix web run sync-hub-ui     # HUB_WEB=<my-hub>/web if the hub is not in ~/Desktop/home
+npm --prefix web run build           # typecheck, then build into src/airec/web/static
+npm --prefix web run dev             # live reload at :5175, against `rec serve --port 8765`
+```
+
+When the hub starts the app it sets `HUB_API` and `HUB_TOKEN`: the server reads the hub's
+appearance so the first paint already matches, and opens links through the hub (a new tab does
+nothing inside the hub's window).
 
 ## Tracking a direction
 
@@ -200,11 +225,12 @@ src/airec/
   http.py       shared client with retries
   store.py      SQLite memory
   sections/     the plugins: base.py (contract), github_trends, ai_news, papers/
-  web/          the app: one FastAPI module, templates and static files
+  web/          the app: one FastAPI module (JSON API) and the built page in static/
   sources/      outside services, knowing nothing about reports
   prompts/      every prompt as plain text
   defaults/     what `rec init` copies
 tests/          offline: a fake web and a scripted model
+web/            the app's React source (Vite, Tailwind, the hub's vendored design layer)
 ```
 
 ## Development

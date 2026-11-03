@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from airec import report
+from airec import cover, report
 from airec.config import ConfigError, Settings
 from airec.http import Http
 from airec.llm import Llm
@@ -41,6 +41,7 @@ class RunResult:
     path: Path
     status: str  # ok | partial | failed
     outcomes: list[report.SectionOutcome]
+    cover: str | None = None  # "ok: …", "failed: …", or None when not attempted
 
 
 def iso_week(moment: datetime) -> str:
@@ -113,6 +114,7 @@ def run_sections(
         if outcome.result is None and saved:
             error = outcome.error
             outcome = _restored(section, saved)
+            outcome.error = error  # the report keeps content, but this attempt still failed
             outcome.warnings = [*outcome.warnings, f"Rebuild failed, kept earlier version: {error}"]
         log.info("%s: %s", section.key, outcome.result.stats if outcome.result else outcome.error)
         outcomes.append(outcome)
@@ -146,6 +148,10 @@ def _commit(store: Store, run_id: int, week: str, outcomes: list[report.SectionO
     for outcome in outcomes:
         result, window = outcome.result, outcome.window
         if outcome.restored:
+            if outcome.error:  # a failed rebuild that fell back: record the failure, keep the old output
+                store.record_section(
+                    run_id, outcome.key, "failed", window.since, window.until, {}, outcome.error
+                )
             continue
         store.record_section(
             run_id,
@@ -222,14 +228,42 @@ def generate(
         if not dry_run:
             report.write_home_card(paths.home_card, week, outcomes, link)
 
-        failures = sum(not outcome.ok for outcome in outcomes)
-        status = "ok" if not failures else "failed" if failures == len(outcomes) else "partial"
+        # A section that fell back to an earlier version still failed this time.
+        failures = sum(outcome.error is not None for outcome in outcomes)
+        empty = sum(not outcome.ok for outcome in outcomes)
+        status = "ok" if not failures else "failed" if empty == len(outcomes) else "partial"
         store.finish_run(run_id, status, str(path), ctx.llm.usage.total_tokens)
+
+        # The text is delivered and recorded; the cover only decorates it.
+        cover_state = None
+        if settings.app.cover.enabled and not dry_run and status != "failed":
+            cover_state = add_cover(settings, path, week)
 
     if settings.app.report.notify and not dry_run:
         note = f"{week} is ready" if status == "ok" else f"{week}: {failures} section(s) failed"
         report.notify(title, note, link)
-    return RunResult(path, status, outcomes)
+    return RunResult(path, status, outcomes, cover_state)
+
+
+def add_cover(settings: Settings, path: Path, week: str) -> str:
+    """Draw and attach the overview image for the report at `path`. Never raises."""
+    paths, config = settings.paths, settings.app.report
+    image = paths.assets / f"{week}.png"
+    try:
+        summary = cover.generate(
+            path.read_text(encoding="utf-8"),
+            config.title,
+            week,
+            settings.app.cover,
+            image,
+            events_log=paths.logs / f"{week}.cover.jsonl",
+        )
+        report.attach_cover(path, image, week, config)
+    except Exception as exc:  # a missing cover must never cost the report
+        log.warning("cover failed: %s", exc)
+        return f"failed: {exc}"[:300]
+    log.info("cover: %s", summary or image)
+    return f"ok: {summary}" if summary else "ok"
 
 
 @contextmanager

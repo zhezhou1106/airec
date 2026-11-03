@@ -97,6 +97,32 @@ def deliver(markdown: str, folder: Path, week: str, config: ReportConfig) -> Pat
     return path
 
 
+def cover_markdown(week: str, title: str) -> str:
+    return f"![{title} {week} overview](assets/{week}.png)"
+
+
+def attach_cover(path: Path, image: Path, week: str, config: ReportConfig) -> None:
+    """Put the cover under the report's date line, and copy both to `copy_to`. Idempotent."""
+    line = cover_markdown(week, config.title)
+    lines = [x for x in path.read_text(encoding="utf-8").splitlines() if x.strip() != line]
+    # After the "*date span*" line that follows the title; at the top of the body if there is none.
+    at = next((i + 1 for i, x in enumerate(lines) if x.startswith("# ")), 0)
+    nxt = next((i for i in range(at, len(lines)) if lines[i].strip()), at)
+    if nxt < len(lines) and lines[nxt].startswith("*"):
+        at = nxt + 1
+    lines[at:at] = ["", line, ""]
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).rstrip() + "\n"
+    path.write_text(text, encoding="utf-8")
+    if config.copy_to:
+        target = config.copy_to.expanduser()
+        try:
+            (target / "assets").mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target / path.name)
+            shutil.copyfile(image, target / "assets" / image.name)
+        except OSError as exc:
+            log.warning("Could not copy the cover to %s: %s", target, exc)
+
+
 def write_home_card(
     path: Path, week: str, outcomes: list[SectionOutcome], link: str, limit: int = 5
 ) -> None:

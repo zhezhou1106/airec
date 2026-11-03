@@ -62,6 +62,20 @@ class ReportConfig(Strict):
     link: str | None = None  # what a notification opens; {path} is relative to the home
 
 
+class CoverConfig(Strict):
+    """An overview image drawn by the Codex CLI after the text is written (see cover.py)."""
+
+    enabled: bool = False
+    command: str = "codex"
+    model: str | None = None  # None uses Codex's own default from ~/.codex/config.toml
+    reasoning: str | None = "medium"
+    timeout: int = Field(default=900, ge=60)  # seconds
+    style: str = (
+        "a clean editorial illustration, flat shapes with soft depth, deep navy background "
+        "with coral and sky-blue accents, generous negative space, readable at thumbnail size"
+    )
+
+
 class ScheduleConfig(Strict):
     weekday: int = Field(default=1, ge=1, le=7)  # ISO weekday: 1 is Monday
     hour: int = Field(default=9, ge=0, le=23)  # local time
@@ -72,6 +86,7 @@ class AppConfig(Strict):
     llm: LlmConfig
     report: ReportConfig = ReportConfig()
     schedule: ScheduleConfig = ScheduleConfig()
+    cover: CoverConfig = CoverConfig()
     sections: dict[str, dict[str, Any] | None]  # report order; validated by each section
 
 
@@ -106,6 +121,10 @@ class Paths:
     @property
     def drafts(self) -> Path:
         return self.reports / "drafts"
+
+    @property
+    def assets(self) -> Path:
+        return self.reports / "assets"
 
     @property
     def logs(self) -> Path:
