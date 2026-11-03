@@ -3,20 +3,18 @@
 A JSON API plus a React page (built from ../../../web into ./static), shown as a tab
 inside my-hub or on its own. It binds to 127.0.0.1 and holds no state of its own:
 reports, directions and the database in the airec home stay the source of truth, so
-the CLI and the app never disagree.
+the CLI and the app never disagree. This module holds the routes; reading reports is
+in `reports`, talking to the hub in `hub`.
 
 Inside the hub the page looks like a hub page: it vendors the hub's design layer and
-follows its style. HUB_API and HUB_TOKEN (set by the hub for services) let the server
-read the hub's appearance for the first paint and open links through the hub.
+follows its style.
 """
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import sys
-import threading
 import webbrowser
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from ruamel.yaml.error import YAMLError as RuamelYAMLError
 
-from airec import __version__, pipeline, schedule
+from airec import __version__, pipeline
 from airec.config import ConfigError, Settings, load_settings
 from airec.llm import LlmError
 from airec.sections import validate_block
@@ -49,128 +47,18 @@ from airec.sections.papers.directions import (
     unique_id,
 )
 from airec.store import Store
-from airec.web import config_edit
+from airec.web import config_edit, hub
+from airec.web.hub import appearance
+from airec.web.reports import ASSET, ReportView
+
+__all__ = ["ReportView", "appearance", "create_app", "run_preview"]
 
 _STATIC = Path(__file__).parent / "static"
 _WEEK = re.compile(r"^\d{4}-W\d{2}$")
-_ASSET = re.compile(r"^[\w.-]+\.(png|jpe?g|webp|gif)$")
-_IMAGE_REF = re.compile(r"!\[[^\]]*\]\((?:\./)?assets/([\w.-]+)\)")
-_SUBTITLE = re.compile(r"^\s*# .+\n+\*([^*\n]+)\*[ \t]*$", re.MULTILINE)
-_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_DARK_STYLES = {"terminal", "mocha", "macchiato", "frappe"}
 _LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 _MAX_DESCRIPTION = 6000
 _PREVIEW_DAYS = 14
 _CONFIG_VALUES = Body(embed=True)
-_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-
-class ReportView:
-    """Reports and run state for the app's lifetime.
-
-    One database connection serves every request; FastAPI runs requests on worker
-    threads, so database reads hold `lock`. Gallery rows are cached per report and
-    re-read when the file or the assets folder changes.
-    """
-
-    def __init__(self, settings: Settings, store: Store):
-        self.settings = settings
-        self.store = store
-        self.lock = threading.Lock()
-        self._summaries: dict[str, tuple[tuple[int, ...], dict[str, Any]]] = {}
-
-    def weeks(self) -> list[str]:
-        return sorted((p.stem for p in self.settings.paths.reports.glob("*.md")), reverse=True)
-
-    def section_warnings(self, week: str) -> list[str] | None:
-        """The run notes the database kept for `week`, or None if it has no sections for it."""
-        keys = self.settings.app.sections
-        with self.lock:
-            outputs = [self.store.get_state(key, f"output:{week}") for key in keys]
-        found = [output for output in outputs if output]
-        if not found:
-            return None
-        return [w for output in found for w in output["warnings"]]
-
-    def report_path(self, week: str) -> Path:
-        return self.settings.paths.reports / f"{week}.md"
-
-    def text(self, week: str) -> str:
-        path = self.report_path(week)
-        return path.read_text(encoding="utf-8") if path.is_file() else ""
-
-    def cover(self, week: str, text: str) -> str | None:
-        """The image the report opens with, else assets/<week>.<ext>, if it is on disk."""
-        assets = self.settings.paths.reports / "assets"
-        names = [m.group(1) for m in _IMAGE_REF.finditer(text)][:1]
-        names += [f"{week}.{ext}" for ext in ("png", "jpg", "jpeg", "webp")]
-        for name in names:
-            if _ASSET.match(name) and (assets / name).is_file():
-                return f"/api/assets/{name}"
-        return None
-
-    def summary(self, week: str) -> dict[str, Any]:
-        """One row of the weeks gallery; cached until the report or its assets change."""
-        stamp = _stamp(self.report_path(week), self.settings.paths.reports / "assets")
-        cached = self._summaries.get(week)
-        if cached is None or cached[0] != stamp:
-            cached = (stamp, self._summary(week))
-            self._summaries[week] = cached
-        return dict(cached[1])
-
-    def _summary(self, week: str) -> dict[str, Any]:
-        """One row of the weeks gallery, read from the report file alone (no database)."""
-        text = self.text(week)
-        _, body = _split_front_matter(text)
-        window = _SUBTITLE.search(body)
-        parts = _sections_of(body)
-        glance = next((lines for title, lines in parts if "glance" in title.lower()), [])
-        return {
-            "week": week,
-            "window": window.group(1).strip() if window else None,
-            "highlights": [_plain(x[2:]) for x in glance if x.startswith("- ")][:3],
-            "sections": [
-                {"title": _plain(title), "count": sum(x.startswith(("- ", "* ")) for x in lines)}
-                for title, lines in parts
-                if "glance" not in title.lower()
-            ],
-            "cover": self.cover(week, text),
-        }
-
-    def report(self, week: str) -> dict[str, Any]:
-        """What the reading view shows for one week: the file, and its run notes."""
-        text = self.text(week)
-        warnings = self.section_warnings(week)
-        return {
-            "week": week,
-            "warnings": _run_notes(text) if warnings is None else warnings,
-            "markdown": text,
-            "file": str(self.report_path(week)),
-        }
-
-    def schedule(self) -> tuple[bool, str]:
-        """Whether the weekly run is installed, and how to say when it runs."""
-        plan = self.settings.app.schedule
-        if not schedule.is_installed():
-            return False, "Schedule is off"
-        return True, f"Every {_WEEKDAYS[plan.weekday - 1]} from {plan.hour}:00"
-
-    def directions(self) -> list[dict[str, Any]]:
-        folder = self.settings.paths.directions
-        return [self._direction(d) for d in load_directions(folder, include_paused=True)]
-
-    def _direction(self, direction: Direction) -> dict[str, Any]:
-        with self.lock:
-            stored = self.store.get_state(Papers.key, f"plan:{direction.id}")
-        current = bool(stored) and stored["fingerprint"] == direction.fingerprint
-        plan = stored["plan"] if current else None
-        return {
-            "id": direction.id,
-            "description": direction.description,
-            "paused": direction.paused,
-            "title": plan["title"] if plan else direction.id.replace("-", " ").capitalize(),
-            "plan": plan,
-        }
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -227,7 +115,7 @@ def create_app(settings: Settings) -> FastAPI:
     def report_asset(name: str):
         """Images next to the reports (the weekly cover), by bare file name only."""
         path = settings.paths.reports / "assets" / name
-        if not _ASSET.match(name) or not path.is_file():
+        if not ASSET.match(name) or not path.is_file():
             raise HTTPException(404, "No such image.")
         return FileResponse(path)
 
@@ -281,16 +169,16 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/appearance")
     def get_appearance():
-        return appearance()
+        return hub.appearance()
 
     @app.post("/api/open")
     def open_url(url: str = Body(embed=True)):
         """Open a link in the browser: target=_blank does nothing inside the hub's window."""
         if not url.startswith(("http://", "https://")):
             raise HTTPException(400, "Only http(s) links open.")
-        if _hub_api():
+        if hub.api_url():
             try:
-                return _hub("POST", "/api/open-url", json={"url": url})
+                return hub.request("POST", "/api/open-url", json={"url": url})
             except httpx.HTTPError as exc:
                 raise HTTPException(502, f"The hub did not open the link: {exc}") from None
         webbrowser.open(url)
@@ -366,94 +254,13 @@ def create_app(settings: Settings) -> FastAPI:
                 "npm --prefix web run build</code> in the airec repo.</p>",
                 status_code=503,
             )
-        look = appearance()
+        look = hub.appearance()
         attrs = f'data-style="{look["style"]}" data-theme="{look["theme"]}"'
         if look["term"]:
             attrs += " data-term"
         return page.read_text(encoding="utf-8").replace("<html", f"<html {attrs}", 1)
 
     return app
-
-
-def _stamp(*paths: Path) -> tuple[int, ...]:
-    """Changes when any of `paths` is written (a folder: when a file is added or removed)."""
-    stamp: list[int] = []
-    for path in paths:
-        try:
-            info = path.stat()
-        except FileNotFoundError:
-            stamp += [-1, -1]
-        else:
-            stamp += [info.st_mtime_ns, info.st_size]
-    return tuple(stamp)
-
-
-def _split_front_matter(text: str) -> tuple[str, str]:
-    match = re.match(r"---\r?\n(.*?)\r?\n---\r?\n?", text, re.DOTALL)
-    return (match.group(1), text[match.end() :]) if match else ("", text)
-
-
-def _sections_of(body: str) -> list[tuple[str, list[str]]]:
-    """The "## " sections of a report body (outside code fences), each with its lines."""
-    found: list[tuple[str, list[str]]] = []
-    fenced = False
-    for line in body.splitlines():
-        if line.startswith("```"):
-            fenced = not fenced
-        if not fenced and line.startswith("## "):
-            found.append((line[3:].strip(), []))
-        elif not fenced and line.strip() == "---" and found:
-            break  # the footer (model calls, run notes) is not a section
-        elif found:
-            found[-1][1].append(line)
-    return found
-
-
-def _run_notes(text: str) -> list[str]:
-    """The notes in the report's footer, for a week the database has no sections for."""
-    match = re.search(r"<summary>Run notes</summary>(.*?)</details>", text, re.DOTALL)
-    if not match:
-        return []
-    return [x[2:].strip() for x in match.group(1).splitlines() if x.startswith("- ")]
-
-
-def _plain(markdown: str) -> str:
-    """A markdown line as text: links keep their label, emphasis and code marks go."""
-    return re.sub(r"[*_`]", "", _LINK.sub(r"\1", markdown)).strip()
-
-
-def _hub_api() -> str:
-    return os.environ.get("HUB_API", "").rstrip("/")
-
-
-def _hub(method: str, path: str, **kwargs: Any) -> Any:
-    token = os.environ.get("HUB_TOKEN", "")
-    reply = httpx.request(
-        method, f"{_hub_api()}{path}", headers={"X-Hub-Token": token}, timeout=10, **kwargs
-    )
-    reply.raise_for_status()
-    return reply.json()
-
-
-def appearance() -> dict[str, Any]:
-    """The hub's current style; live changes arrive in the page by postMessage."""
-    fallback = {"style": "terminal", "theme": "dark", "term": True}
-    if not _hub_api():
-        return fallback
-    try:
-        look = _hub("GET", "/api/settings")["settings"]["appearance"]
-    except (httpx.HTTPError, KeyError, TypeError, ValueError):
-        return fallback
-    style = str(look.get("style") or "terminal")
-    if not re.fullmatch(r"[a-z]+", style):
-        return fallback
-    if style == "latte":
-        theme = "light"
-    elif style in _DARK_STYLES:
-        theme = "dark"
-    else:
-        theme = "dark" if look.get("theme") == "dark" else "light"
-    return {"style": style, "theme": theme, "term": style != "classic"}
 
 
 def run_preview(settings: Settings, direction: Direction) -> dict[str, Any]:

@@ -57,7 +57,7 @@ def test_first_paint_follows_the_hub(client, monkeypatch):
     replies = {"latte": "light", "mocha": "dark"}
     for style, theme in replies.items():
         look = {"settings": {"appearance": {"style": style, "theme": "dark"}}}
-        monkeypatch.setattr(web, "_hub", lambda *_a, look=look, **_k: look)
+        monkeypatch.setattr(web.hub, "request", lambda *_a, look=look, **_k: look)
         assert client.get("/api/appearance").json() == {
             "style": style,
             "theme": theme,
@@ -65,7 +65,7 @@ def test_first_paint_follows_the_hub(client, monkeypatch):
         }
         assert f'data-style="{style}" data-theme="{theme}" data-term' in client.get("/").text
     classic = {"settings": {"appearance": {"style": "classic", "theme": "light"}}}
-    monkeypatch.setattr(web, "_hub", lambda *_a, **_k: classic)
+    monkeypatch.setattr(web.hub, "request", lambda *_a, **_k: classic)
     assert client.get("/api/appearance").json() == {
         "style": "classic",
         "theme": "light",
@@ -116,7 +116,7 @@ def test_cover_image_is_served_by_name_only(client, settings):
 def test_links_open_through_the_hub(client, monkeypatch):
     monkeypatch.setenv("HUB_API", "http://127.0.0.1:7777")
     calls = []
-    monkeypatch.setattr(web, "_hub", lambda *a, **k: calls.append((a, k)) or {"ok": True})
+    monkeypatch.setattr(web.hub, "request", lambda *a, **k: calls.append((a, k)) or {"ok": True})
     url = "https://arxiv.org/abs/1"
     assert client.post("/api/open", json={"url": url}, headers=ORIGIN).json() == {"ok": True}
     assert calls == [(("POST", "/api/open-url"), {"json": {"url": url}})]
