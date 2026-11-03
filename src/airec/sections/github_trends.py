@@ -10,7 +10,7 @@ than from the description alone.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from functools import partial
 
 from pydantic import BaseModel, Field
@@ -76,7 +76,7 @@ class GithubTrends(Section):
             return SectionResult("No new repo stood out this week.", stats=stats, commit=commit)
 
         self._attach_readmes(github, candidates)
-        selection = self._select(candidates, gained)
+        selection = self._select(candidates, gained, now)
         by_name = {repo.full_name.lower(): repo for repo in candidates}
         picks = [pick for pick in selection.picks if pick.repo.lower() in by_name]
         picks = picks[: self.config.max_repos]
@@ -192,10 +192,10 @@ class GithubTrends(Section):
         for repo, readme in zip(repos, readmes, strict=True):
             repo.readme = " ".join(readme.split())[:_README_CHARS]
 
-    def _select(self, repos: list[Repo], gained: dict[str, int]) -> RepoSelection:
+    def _select(self, repos: list[Repo], gained: dict[str, int], now: datetime) -> RepoSelection:
         blocks = []
         for repo in repos:
-            age = (datetime.now(UTC) - repo.created_at).days if repo.created_at else "?"
+            age = (now - repo.created_at).days if repo.created_at else "?"
             blocks.append(
                 f"### {repo.full_name}\n"
                 f"stars: {repo.stars}; gained this week: ~{gained[repo.id]}; age: {age} days; "

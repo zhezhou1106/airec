@@ -107,6 +107,20 @@ def test_unknown_section_and_bad_options_are_config_errors(paths, web):
         generate(load_settings(paths), web)
 
 
+def test_validate_block_reads_enabled_and_the_options():
+    from pydantic import ValidationError
+
+    from airec.sections import validate_block
+
+    enabled, config = validate_block("probe", {"enabled": False, "label": "x"})
+    assert enabled is False and config.label == "x"
+    assert validate_block("probe", None)[0] is True
+    with pytest.raises(ValidationError):
+        validate_block("probe", {"lable": "typo"})
+    with pytest.raises(KeyError):
+        validate_block("nonsense", {})
+
+
 def test_one_failed_section_leaves_the_other_and_is_retried_next_week(probe_settings, web):
     week_ago = NOW - timedelta(days=7)
     generate(probe_settings, web, now=week_ago)
@@ -252,7 +266,7 @@ def test_report_is_copied_when_configured(paths, web, tmp_path):
 
 def test_concurrent_runs_are_refused(probe_settings, web):
     with (
-        pipeline._exclusive(probe_settings.paths.lock),
+        pipeline.exclusive(probe_settings.paths.lock),
         pytest.raises(pipeline.AlreadyRunning),
     ):
         generate(probe_settings, web)

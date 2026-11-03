@@ -39,12 +39,19 @@ class Story:
         return hashlib.sha1(canonical_url(self.url).encode()).hexdigest()[:16]
 
 
-def read_feed(
-    http: Http, name: str, url: str, since: datetime, until: datetime, *, primary: bool
+def _feed_stories(
+    content: bytes,
+    source: str,
+    since: datetime,
+    until: datetime,
+    *,
+    limit: int,
+    summary_chars: int,
+    primary: bool = False,
 ) -> list[Story]:
-    parsed = feedparser.parse(http.get(url, attempts=2).content)
+    """The first `limit` entries of an RSS or Atom feed that are dated inside the window."""
     stories = []
-    for entry in parsed.entries[:60]:
+    for entry in feedparser.parse(content).entries[:limit]:
         published = from_struct(entry.get("published_parsed") or entry.get("updated_parsed"))
         link = entry.get("link", "")
         if published is None or not link or not since <= published <= until:
@@ -53,13 +60,20 @@ def read_feed(
             Story(
                 title=clean_text(entry.get("title")),
                 url=link,
-                summary=clean_text(entry.get("summary"))[:1000],
-                source=name,
+                summary=clean_text(entry.get("summary"))[:summary_chars],
+                source=source,
                 published_at=published,
                 primary=primary,
             )
         )
     return stories
+
+
+def read_feed(
+    http: Http, name: str, url: str, since: datetime, until: datetime, *, primary: bool
+) -> list[Story]:
+    content = http.get(url, attempts=2).content
+    return _feed_stories(content, name, since, until, limit=60, summary_chars=1000, primary=primary)
 
 
 def hacker_news(
@@ -96,21 +110,8 @@ def reddit_top(
     # Reddit's top list only offers fixed spans; a catch-up window needs the wider one.
     span = "month" if until - since > timedelta(days=7) else "week"
     response = http.get(f"https://www.reddit.com/r/{subreddit}/top/.rss", params={"t": span})
-    stories = []
-    for entry in feedparser.parse(response.content).entries[:limit]:
-        published = from_struct(entry.get("published_parsed") or entry.get("updated_parsed"))
-        if published is None or not since <= published <= until:
-            continue
-        stories.append(
-            Story(
-                title=clean_text(entry.get("title")),
-                url=entry.get("link", ""),
-                summary=clean_text(entry.get("summary"))[:600],
-                source=f"r/{subreddit}",
-                published_at=published,
-            )
-        )
-    return stories
+    source = f"r/{subreddit}"
+    return _feed_stories(response.content, source, since, until, limit=limit, summary_chars=600)
 
 
 def _size_label(parameters: float) -> str:

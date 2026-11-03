@@ -225,7 +225,7 @@ def cover_command(
         typer.secho("No such report.", fg="red", err=True)
         raise typer.Exit(1)
     try:
-        with pipeline._exclusive(settings.paths.lock):
+        with pipeline.exclusive(settings.paths.lock):
             state = pipeline.add_cover(settings, path, path.stem)
     except pipeline.AlreadyRunning:
         typer.echo("Another run is in progress.")

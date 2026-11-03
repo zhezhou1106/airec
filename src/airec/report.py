@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -14,15 +13,13 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from airec.config import ReportConfig
+from airec.config import TOOL_PATH, ReportConfig
 from airec.llm import Usage
 from airec.sections.base import SectionResult, Window
 
 log = logging.getLogger(__name__)
 
 _MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
-# launchd's PATH leaves out Homebrew.
-_SEARCH_PATH = os.pathsep.join([os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"])
 
 
 @dataclass
@@ -158,7 +155,7 @@ def notify(title: str, message: str, link: str) -> None:
     """
     if sys.platform != "darwin":
         return
-    notifier = shutil.which("terminal-notifier", path=_SEARCH_PATH)
+    notifier = shutil.which("terminal-notifier", path=TOOL_PATH)
     if notifier:
         command = [notifier, "-title", title, "-message", message, "-open", link]
         command += ["-group", "airec"]

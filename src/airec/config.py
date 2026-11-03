@@ -22,6 +22,8 @@ from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 DEFAULTS = Path(__file__).parent / "defaults"
+# Where helper programs (codex, terminal-notifier) are found: launchd's PATH leaves out Homebrew.
+TOOL_PATH = os.pathsep.join([os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"])
 
 
 class ConfigError(RuntimeError):

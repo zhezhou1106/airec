@@ -16,10 +16,13 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import webbrowser
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -33,6 +36,7 @@ from ruamel.yaml.error import YAMLError as RuamelYAMLError
 from airec import __version__, pipeline, schedule
 from airec.config import ConfigError, Settings, load_settings
 from airec.llm import LlmError
+from airec.sections import validate_block
 from airec.sections.base import SectionError, Window
 from airec.sections.papers import Papers
 from airec.sections.papers.directions import (
@@ -62,11 +66,18 @@ _WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 
 
 class ReportView:
-    """Reports and run state, read fresh for each request."""
+    """Reports and run state for the app's lifetime.
+
+    One database connection serves every request; FastAPI runs requests on worker
+    threads, so database reads hold `lock`. Gallery rows are cached per report and
+    re-read when the file or the assets folder changes.
+    """
 
     def __init__(self, settings: Settings, store: Store):
         self.settings = settings
         self.store = store
+        self.lock = threading.Lock()
+        self._summaries: dict[str, tuple[tuple[int, ...], dict[str, Any]]] = {}
 
     def weeks(self) -> list[str]:
         return sorted((p.stem for p in self.settings.paths.reports.glob("*.md")), reverse=True)
@@ -74,7 +85,9 @@ class ReportView:
     def section_warnings(self, week: str) -> list[str] | None:
         """The run notes the database kept for `week`, or None if it has no sections for it."""
         keys = self.settings.app.sections
-        found = [o for o in (self.store.get_state(k, f"output:{week}") for k in keys) if o]
+        with self.lock:
+            outputs = [self.store.get_state(key, f"output:{week}") for key in keys]
+        found = [output for output in outputs if output]
         if not found:
             return None
         return [w for output in found for w in output["warnings"]]
@@ -97,7 +110,16 @@ class ReportView:
         return None
 
     def summary(self, week: str) -> dict[str, Any]:
-        """One row of the weeks gallery, read from the report file alone (cheap, no database)."""
+        """One row of the weeks gallery; cached until the report or its assets change."""
+        stamp = _stamp(self.report_path(week), self.settings.paths.reports / "assets")
+        cached = self._summaries.get(week)
+        if cached is None or cached[0] != stamp:
+            cached = (stamp, self._summary(week))
+            self._summaries[week] = cached
+        return dict(cached[1])
+
+    def _summary(self, week: str) -> dict[str, Any]:
+        """One row of the weeks gallery, read from the report file alone (no database)."""
         text = self.text(week)
         _, body = _split_front_matter(text)
         window = _SUBTITLE.search(body)
@@ -126,18 +148,20 @@ class ReportView:
             "file": str(self.report_path(week)),
         }
 
-    def schedule_text(self) -> str:
+    def schedule(self) -> tuple[bool, str]:
+        """Whether the weekly run is installed, and how to say when it runs."""
         plan = self.settings.app.schedule
         if not schedule.is_installed():
-            return "Schedule is off"
-        return f"Every {_WEEKDAYS[plan.weekday - 1]} from {plan.hour}:00"
+            return False, "Schedule is off"
+        return True, f"Every {_WEEKDAYS[plan.weekday - 1]} from {plan.hour}:00"
 
     def directions(self) -> list[dict[str, Any]]:
         folder = self.settings.paths.directions
         return [self._direction(d) for d in load_directions(folder, include_paused=True)]
 
     def _direction(self, direction: Direction) -> dict[str, Any]:
-        stored = self.store.get_state(Papers.key, f"plan:{direction.id}")
+        with self.lock:
+            stored = self.store.get_state(Papers.key, f"plan:{direction.id}")
         current = bool(stored) and stored["fingerprint"] == direction.fingerprint
         plan = stored["plan"] if current else None
         return {
@@ -150,7 +174,16 @@ class ReportView:
 
 
 def create_app(settings: Settings) -> FastAPI:
-    app = FastAPI(title="airec", version=__version__, docs_url=None, redoc_url=None)
+    reports = ReportView(settings, Store(settings.paths.db, check_same_thread=False))
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        reports.store.close()
+
+    app = FastAPI(
+        title="airec", version=__version__, docs_url=None, redoc_url=None, lifespan=lifespan
+    )
     folder = settings.paths.directions
 
     @app.middleware("http")
@@ -165,45 +198,30 @@ def create_app(settings: Settings) -> FastAPI:
                 return JSONResponse({"detail": "same origin only"}, status_code=403)
         return await call_next(request)
 
-    def view() -> ReportView:
-        return ReportView(settings, Store(settings.paths.db))
-
     @app.get("/api/overview")
     def overview():
         """What the page frame needs: the weeks on disk and the schedule."""
-        reports = view()
-        try:
-            weeks, plan = reports.weeks(), reports.schedule_text()
-        finally:
-            reports.store.close()
+        scheduled, plan = reports.schedule()
         return {
             "title": settings.app.report.title,
-            "weeks": weeks,
+            "weeks": reports.weeks(),
             "schedule": plan,
-            "scheduled": plan != "Schedule is off",
+            "scheduled": scheduled,
         }
 
     @app.get("/api/weeks")
     def list_weeks():
         """The weeks gallery in one request: every report, newest first, with excerpt and cover."""
-        reports = view()
-        try:
-            weeks = [reports.summary(week) for week in reports.weeks()]
-        finally:
-            reports.store.close()
+        weeks = [reports.summary(week) for week in reports.weeks()]
         for i, week in enumerate(weeks):
             week["latest"] = i == 0
         return {"weeks": weeks}
 
     @app.get("/api/weeks/{week}")
     def week_report(week: str):
-        reports = view()
-        try:
-            if not _WEEK.match(week) or week not in reports.weeks():
-                raise HTTPException(404, "No report for that week.")
-            return reports.report(week)
-        finally:
-            reports.store.close()
+        if not _WEEK.match(week) or week not in reports.weeks():
+            raise HTTPException(404, "No report for that week.")
+        return reports.report(week)
 
     @app.get("/api/assets/{name}")
     def report_asset(name: str):
@@ -218,12 +236,7 @@ def create_app(settings: Settings) -> FastAPI:
             data = config_edit.snapshot(settings.paths)
         except (OSError, ValueError) as exc:
             raise HTTPException(500, f"Could not read {settings.paths.config}: {exc}") from None
-        reports = view()
-        try:
-            data["schedule_text"] = reports.schedule_text()
-        finally:
-            reports.store.close()
-        data["scheduled"] = data["schedule_text"] != "Schedule is off"
+        data["scheduled"], data["schedule_text"] = reports.schedule()
         return data
 
     @app.get("/api/config")
@@ -248,18 +261,14 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(422, detail) from None
         if changed:
             try:
-                settings = load_settings(settings.paths)
+                settings = reports.settings = load_settings(settings.paths)
             except ConfigError as exc:  # validated above, so this means the file moved under us
                 raise HTTPException(500, str(exc)) from None
         return {"changed": changed, "config": config_view()}
 
     @app.get("/api/directions")
     def list_directions():
-        reports = view()
-        try:
-            directions = reports.directions()
-        finally:
-            reports.store.close()
+        directions = reports.directions()
         papers = _papers_config(settings)
         return {
             "directions": directions,
@@ -366,6 +375,19 @@ def create_app(settings: Settings) -> FastAPI:
     return app
 
 
+def _stamp(*paths: Path) -> tuple[int, ...]:
+    """Changes when any of `paths` is written (a folder: when a file is added or removed)."""
+    stamp: list[int] = []
+    for path in paths:
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            stamp += [-1, -1]
+        else:
+            stamp += [info.st_mtime_ns, info.st_size]
+    return tuple(stamp)
+
+
 def _split_front_matter(text: str) -> tuple[str, str]:
     match = re.match(r"---\r?\n(.*?)\r?\n---\r?\n?", text, re.DOTALL)
     return (match.group(1), text[match.end() :]) if match else ("", text)
@@ -464,9 +486,9 @@ def run_preview(settings: Settings, direction: Direction) -> dict[str, Any]:
 
 
 def _papers_config(settings: Settings) -> Papers.Config:
-    block = dict(settings.app.sections.get(Papers.key) or {})
-    block.pop("enabled", None)
-    return Papers.Config.model_validate(block)
+    """The papers settings, whether or not the section is enabled."""
+    _, config = validate_block(Papers.key, settings.app.sections.get(Papers.key))
+    return cast(Papers.Config, config)
 
 
 def _clean_description(description: str) -> str:

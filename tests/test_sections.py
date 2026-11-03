@@ -78,6 +78,7 @@ def test_trends_keep_new_repos_ranked_by_momentum(make_context, web):
 
     user_prompt = section.ctx.llm.prompts[0][2]
     assert user_prompt.index("b/fast") < user_prompt.index("a/slow")
+    assert "age: 10 days" in user_prompt  # measured at the window's end, like the bullets
     assert "c/old" not in user_prompt
     assert "ghost/repo" not in result.markdown
     assert "Serving is hot." in result.markdown
@@ -573,6 +574,14 @@ def test_plan_matching_ignores_word_order_and_case():
     assert not plan.matches("Reinforcement learning", "nothing relevant")
 
 
+def test_plan_needs_three_phrases_after_duplicates_are_dropped():
+    repeated = ["test-time training", 'Test-time  "training"'.lower(), "TTT", " "]
+    with pytest.raises(ValueError, match="3 distinct"):
+        SearchPlan.model_validate({**PLAN, "phrases": repeated})
+    plan = SearchPlan.model_validate({**PLAN, "phrases": [*repeated, "online adaptation"]})
+    assert plan.phrases == ["test-time training", "TTT", "online adaptation"]
+
+
 def test_plan_rejects_malformed_categories():
     plan = SearchPlan.model_validate({**PLAN, "categories": ["cs.LG", "bad; drop"]})
     assert plan.categories == ["cs.LG"]
@@ -729,3 +738,8 @@ def test_trends_save_star_snapshots_only_on_commit(make_context, web, store):
     assert store.db.execute(count).fetchone()[0] == 0
     result.commit()
     assert store.db.execute(count).fetchone()[0] == 1
+
+
+def test_one_github_client_per_run(make_context):
+    ctx = make_context()
+    assert ctx.github is ctx.github

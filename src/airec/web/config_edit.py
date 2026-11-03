@@ -27,7 +27,7 @@ from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.scalarstring import FoldedScalarString, LiteralScalarString, ScalarString
 
 from airec.config import AppConfig, Paths, Secrets
-from airec.sections import available
+from airec.sections import available, validate_block
 
 KEEP_BACKUPS = 5
 
@@ -334,10 +334,8 @@ def validate(text: str) -> None:
         if key not in registry:
             errors.append({"loc": ["sections", key], "msg": "Unknown section."})
             continue
-        options = dict(block or {})
-        options.pop("enabled", None)
         try:
-            registry[key].Config.model_validate(options)
+            validate_block(key, block)
         except ValidationError as exc:
             errors += _errors(exc, ["sections", key])
     if errors:

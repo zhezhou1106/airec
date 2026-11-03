@@ -451,3 +451,43 @@ def test_config_section_without_settings_gets_a_block_only_when_changed(client, 
     sections["papers"]["max_papers"] = 3
     assert put_config(client, "sections", sections).json()["changed"] is True
     assert "max_papers: 3" in settings.paths.config.read_text()
+
+
+def test_schedule_off_is_a_flag_not_a_sentence(client, monkeypatch):
+    monkeypatch.setattr("airec.schedule.is_installed", lambda: False)
+    overview = client.get("/api/overview").json()
+    assert overview["scheduled"] is False and overview["schedule"] == "Schedule is off"
+    assert client.get("/api/config").json()["scheduled"] is False
+    monkeypatch.setattr("airec.schedule.is_installed", lambda: True)
+    assert client.get("/api/overview").json()["scheduled"] is True
+
+
+def test_gallery_rows_are_cached_until_the_report_changes(client, settings, monkeypatch):
+    path = settings.paths.reports / "2026-W44.md"
+    path.write_text(DIGEST)
+    reads = []
+    original = web.ReportView.text
+    monkeypatch.setattr(
+        web.ReportView, "text", lambda self, w: reads.append(w) or original(self, w)
+    )
+    first = client.get("/api/weeks").json()["weeks"]
+    assert client.get("/api/weeks").json()["weeks"] == first
+    assert reads == ["2026-W44"]
+    path.write_text(DIGEST.replace("Oct 19 to Oct 26", "Oct 20 to Oct 27, plus"))
+    assert client.get("/api/weeks").json()["weeks"][0]["window"].startswith("Oct 20")
+    assert reads == ["2026-W44", "2026-W44"]
+    (settings.paths.reports / "assets").mkdir()
+    (settings.paths.reports / "assets" / "2026-W44.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    assert client.get("/api/weeks").json()["weeks"][0]["cover"] == "/api/assets/2026-W44.png"
+
+
+def test_one_database_connection_serves_concurrent_requests(client, settings):
+    from concurrent.futures import ThreadPoolExecutor
+
+    saved_week(settings)
+    (settings.paths.directions / "ttt.md").write_text("Test-time training for LLMs.")
+    paths = ["/api/weeks/2026-W45", "/api/directions", "/api/overview", "/api/weeks"] * 20
+    with ThreadPoolExecutor(8) as pool:
+        replies = list(pool.map(client.get, paths))
+    assert all(reply.status_code == 200 for reply in replies)
+    assert replies[0].json()["warnings"] == ["a feed was down"]

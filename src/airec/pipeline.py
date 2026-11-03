@@ -233,7 +233,7 @@ def generate(
 
     with (
         sigterm_raises(),
-        _exclusive(paths.lock),
+        exclusive(paths.lock),
         database(paths.db, scratch=dry_run) as store,
     ):
         ctx = build_context(settings, store, week, transport=transport, llm=llm, trace_path=trace)
@@ -321,7 +321,7 @@ def add_cover(settings: Settings, path: Path, week: str) -> str:
 
 
 @contextmanager
-def _exclusive(lock_path: Path) -> Iterator[None]:
+def exclusive(lock_path: Path) -> Iterator[None]:
     """Only one run at a time: the hourly scheduler must not overlap a slow run."""
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w") as handle:

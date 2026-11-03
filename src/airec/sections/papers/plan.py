@@ -10,12 +10,13 @@ from airec import prompts
 from airec.sections.base import Context
 from airec.sections.papers.directions import Direction
 
+_MIN_PHRASES = 3
 _CATEGORY = re.compile(r"^[a-z-]+(\.[A-Za-z-]+)?$")
 
 
 class SearchPlan(BaseModel):
     title: str
-    phrases: list[str] = Field(min_length=3)
+    phrases: list[str]  # at least three once cleaned
     categories: list[str] = Field(default_factory=list)
     include: list[str] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)
@@ -24,7 +25,10 @@ class SearchPlan(BaseModel):
     @classmethod
     def _clean_phrases(cls, phrases: list[str]) -> list[str]:
         cleaned = [" ".join(phrase.replace('"', "").split()) for phrase in phrases]
-        return list(dict.fromkeys(phrase for phrase in cleaned if phrase))
+        unique = list(dict.fromkeys(phrase for phrase in cleaned if phrase))
+        if len(unique) < _MIN_PHRASES:
+            raise ValueError(f"needs at least {_MIN_PHRASES} distinct search phrases")
+        return unique
 
     @field_validator("categories")
     @classmethod

@@ -20,11 +20,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from airec.config import CoverConfig
+from airec.config import TOOL_PATH, CoverConfig
 
 log = logging.getLogger(__name__)
 
-_SEARCH_PATH = os.pathsep.join([os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"])
 _PNG = b"\x89PNG\r\n\x1a\n"
 _JPEG = b"\xff\xd8\xff"
 _IMAGE_NAME = "overview.png"
@@ -59,7 +58,7 @@ def generate(
     events_log: Path | None = None,
 ) -> str:
     """Draw the cover for `markdown` into `target`. Returns Codex's one-line summary of it."""
-    codex = shutil.which(config.command, path=_SEARCH_PATH)
+    codex = shutil.which(config.command, path=TOOL_PATH)
     if not codex:
         raise CoverError(f"'{config.command}' is not installed (brew install codex).")
     with tempfile.TemporaryDirectory(prefix="airec-cover-") as folder:

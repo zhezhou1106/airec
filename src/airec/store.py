@@ -57,8 +57,9 @@ def _now() -> str:
 
 
 class Store:
-    def __init__(self, path: Path | str):
-        self.db = sqlite3.connect(path)
+    def __init__(self, path: Path | str, *, check_same_thread: bool = True):
+        """`check_same_thread=False` lets a caller that serialises access (the app) share it."""
+        self.db = sqlite3.connect(path, check_same_thread=check_same_thread)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(_SCHEMA)
