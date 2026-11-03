@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import timedelta
 
 import httpx
@@ -25,7 +27,7 @@ from airec.sections.papers.directions import (
 from airec.sections.papers.plan import SearchPlan
 from airec.sources import news
 from airec.sources.news import Story
-from airec.sources.papers import S2_ATTEMPTS
+from airec.sources.papers import S2_ATTEMPTS, hf_daily_papers
 from tests.conftest import NOW
 
 WINDOW = Window(NOW - timedelta(days=7), NOW)
@@ -626,3 +628,72 @@ def test_preview_searches_like_a_run_with_daily_papers_and_lookback(make_context
     assert min(days) == widened.date().isoformat()
     arxiv = next(r for r in web.requests if "export.arxiv.org" in str(r.url))
     assert f"submittedDate:[{widened:%Y%m%d%H%M}" in arxiv.url.params["search_query"]
+
+
+# ---- concurrency ----
+
+
+class _Overlap:
+    """A slow handler that records how many requests were in flight at once."""
+
+    def __init__(self, reply, delay: float = 0.03):
+        self.reply, self.delay = reply, delay
+        self.now = self.peak = 0
+        self.lock = threading.Lock()
+
+    def __call__(self, request):
+        with self.lock:
+            self.now += 1
+            self.peak = max(self.peak, self.now)
+        time.sleep(self.delay)
+        with self.lock:
+            self.now -= 1
+        return self.reply(request)
+
+
+def test_gather_all_keeps_order_and_counts_every_failure(make_context):
+    section = news_section(make_context, lambda *_: {})
+
+    def job(n):
+        def fetch():
+            time.sleep(0.01 * (5 - n % 5))
+            if n % 3 == 0:
+                raise RuntimeError(f"down {n}")
+            return [n]
+
+        return (f"source {n}", fetch)
+
+    found = section.gather_all([job(n) for n in range(12)], [])
+    assert found == [[] if n % 3 == 0 else [n] for n in range(12)]
+    assert section._failed_sources == 4 and section._ok_sources == 8
+    assert sorted(section.warnings) == sorted(
+        f"source {n} failed: RuntimeError: down {n}" for n in range(0, 12, 3)
+    )
+
+
+def test_news_sources_are_fetched_concurrently_in_config_order(make_context, web):
+    def feed(request):
+        name = request.url.host.split(".")[0]
+        return httpx.Response(200, text=rss((f"Story {name}", f"https://{name}.dev/1")))
+
+    slow = _Overlap(feed)
+    web.route("/feed", slow)
+    web.route("api/models", [])
+    feeds = [{"name": f"F{n}", "url": f"https://f{n}.dev/feed"} for n in range(12)]
+    section = news_section(make_context, lambda *_: {}, feeds=feeds)
+    stories = section._collect(WINDOW)
+    assert [story.source for story in stories] == [f"F{n}" for n in range(12)]
+    assert 1 < slow.peak <= 6
+
+
+def test_daily_papers_fetch_days_concurrently_in_order(web):
+    def day(request):
+        date = request.url.params["date"]
+        return httpx.Response(200, json=[{"paper": {"id": date, "title": date}}])
+
+    slow = _Overlap(day)
+    web.route("daily_papers", slow)
+    papers = hf_daily_papers(Http(web), NOW - timedelta(days=9), NOW)
+    expected = [(NOW - timedelta(days=9 - n)).date().isoformat() for n in range(10)]
+    assert [paper.title for paper in papers] == expected
+    assert 1 < slow.peak <= 6

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import feedparser
 
@@ -23,6 +24,7 @@ S2_API = "https://api.semanticscholar.org"
 S2_ATTEMPTS = 6  # the keyless pool is shared and refuses often; waiting usually works
 S2_FIELDS = "title,externalIds,abstract,publicationDate,citationCount,venue,authors,url"
 HF_DAILY = "https://huggingface.co/api/daily_papers"
+HF_WORKERS = 6  # days fetched at once
 _ARXIV_ID = re.compile(r"(\d{4}\.\d{4,5})")
 
 
@@ -185,29 +187,36 @@ class SemanticScholar:
 
 
 def hf_daily_papers(http: Http, since: datetime, until: datetime) -> list[Paper]:
-    """Every paper featured on Hugging Face in the window, with upvotes and code links."""
+    """Every paper featured on Hugging Face in the window, with upvotes and code links.
+
+    Days are fetched a few at a time; the result keeps day order. One failing day
+    fails the whole list, as before: a source answers fully or not at all.
+    """
+    days = [since.date() + timedelta(days=n) for n in range((until.date() - since.date()).days + 1)]
+
+    def fetch(day: date) -> list[dict]:
+        return http.get(HF_DAILY, params={"date": day.isoformat(), "limit": 100}).json()
+
+    with ThreadPoolExecutor(max(1, min(HF_WORKERS, len(days)))) as pool:
+        entries = [entry for found in pool.map(fetch, days) for entry in found]
     papers = []
-    day = since.date()
-    while day <= until.date():
-        response = http.get(HF_DAILY, params={"date": day.isoformat(), "limit": 100})
-        day += timedelta(days=1)
-        for entry in response.json():
-            paper = entry.get("paper") or {}
-            arxiv_id = paper.get("id")
-            if not arxiv_id:
-                continue
-            abstract = clean_text(paper.get("summary"))
-            papers.append(
-                Paper(
-                    id=f"arxiv:{arxiv_id}",
-                    title=clean_text(paper.get("title")),
-                    abstract=abstract,
-                    url=f"https://arxiv.org/abs/{arxiv_id}",
-                    published_at=parse_iso(paper.get("publishedAt")) or since,
-                    authors=[a.get("name", "") for a in paper.get("authors") or []],
-                    code_url=paper.get("githubRepo") or _code_link(abstract),
-                    upvotes=int(paper.get("upvotes") or 0),
-                    found_by=["hf_daily"],
-                )
+    for entry in entries:
+        paper = entry.get("paper") or {}
+        arxiv_id = paper.get("id")
+        if not arxiv_id:
+            continue
+        abstract = clean_text(paper.get("summary"))
+        papers.append(
+            Paper(
+                id=f"arxiv:{arxiv_id}",
+                title=clean_text(paper.get("title")),
+                abstract=abstract,
+                url=f"https://arxiv.org/abs/{arxiv_id}",
+                published_at=parse_iso(paper.get("publishedAt")) or since,
+                authors=[a.get("name", "") for a in paper.get("authors") or []],
+                code_url=paper.get("githubRepo") or _code_link(abstract),
+                upvotes=int(paper.get("upvotes") or 0),
+                found_by=["hf_daily"],
             )
+        )
     return papers

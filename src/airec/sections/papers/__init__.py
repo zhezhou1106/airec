@@ -321,10 +321,9 @@ class Papers(Section):
         system = prompts.render(
             "paper_judge", description=direction.description, criteria=plan.criteria_text()
         )
-        failed = 0
 
-        def judge(batch: list[Paper]) -> list[Verdict]:
-            nonlocal failed
+        def judge(batch: list[Paper]) -> list[Verdict] | None:
+            """The batch's verdicts, or None when the model failed (counted after the map)."""
             labels = {f"p{number}": paper for number, paper in enumerate(batch, 1)}
             user = "\n\n".join(
                 f"{label}: {paper.title}\n{paper.abstract[:_ABSTRACT_CHARS]}"
@@ -333,9 +332,8 @@ class Papers(Section):
             try:
                 reply = self.ctx.llm.json("fast", system, user, Verdicts)
             except LlmError as exc:
-                failed += 1
                 self.warn(f"judging for {direction.id} failed: {str(exc)[:160]}")
-                return []
+                return None
             return [
                 Verdict(id=labels[v.id].id, score=v.score, reason=v.reason)
                 for v in reply.verdicts
@@ -343,7 +341,9 @@ class Papers(Section):
             ]
 
         with ThreadPoolExecutor(_WORKERS) as pool:
-            new = [verdict for group in pool.map(judge, batches) for verdict in group]
+            replies = list(pool.map(judge, batches))
+        failed = sum(reply is None for reply in replies)
+        new = [verdict for reply in replies if reply for verdict in reply]
         if failed * _MAX_FAILED_BATCHES > len(batches):
             # Unjudged papers would leave the window for good, so this week must be retried.
             raise SectionError(f"{failed} of {len(batches)} judge batches failed: {direction.id}")

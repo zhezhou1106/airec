@@ -10,7 +10,6 @@ than from the description alone.
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, Field
@@ -22,7 +21,6 @@ from airec.sections.base import Section, SectionError, SectionResult, Window
 from airec.sources.github import GitHub, Repo
 
 _README_CHARS = 1200
-_WORKERS = 6
 _SNAPSHOT_MIN_AGE_DAYS = 3
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS repo_stars (
@@ -62,7 +60,7 @@ class GithubTrends(Section):
         extra_context: str = ""
 
     def run(self, window: Window) -> SectionResult:
-        github = GitHub(self.ctx.http, self.ctx.secrets.get("GITHUB_TOKEN"))
+        github = self.ctx.github
         now = window.until
         repos = self._collect(github, now)
         self.require_sources()
@@ -98,7 +96,7 @@ class GithubTrends(Section):
         )
 
     def checks(self) -> list[tuple[str, Callable[[], str]]]:
-        github = GitHub(self.ctx.http, self.ctx.secrets.get("GITHUB_TOKEN"))
+        github = self.ctx.github
         return [("GitHub trending page", lambda: f"{len(github.trending())} repos parsed")]
 
     # ---- collecting ----
@@ -114,32 +112,30 @@ class GithubTrends(Section):
                 elif existing.stars_gained is None:
                     existing.stars_gained = repo.stars_gained
 
-        for language in self.config.trending_languages:
-            add(
-                self.gather(
-                    f"trending/{language or 'all'}", lambda name=language: github.trending(name), []
-                )
-            )
-
+        jobs: list[tuple[str, Callable[[], list[Repo]]]] = [
+            (f"trending/{language or 'all'}", lambda name=language: github.trending(name))
+            for language in self.config.trending_languages
+        ]
         born = (now - timedelta(days=self.config.max_age_days)).strftime("%Y-%m-%d")
         for topic in self.config.search_topics:
             query = f"topic:{topic} created:>={born} stars:>={self.config.min_stars}"
-            add(self.gather(f"search/{topic}", lambda q=query: github.search(q), []))
+            jobs.append((f"search/{topic}", lambda q=query: github.search(q)))
+        for repos in self.gather_all(jobs, []):
+            add(repos)
 
         # The trending page omits creation dates, topics and archive flags.
         missing = [repo for repo in found.values() if repo.created_at is None]
-        with ThreadPoolExecutor(_WORKERS) as pool:
-            details = pool.map(
-                lambda r: self.gather(r.full_name, lambda: github.repo(r.full_name), None), missing
-            )
-            for repo, detail in zip(missing, details, strict=True):
-                if detail is not None:
-                    repo.created_at = detail.created_at
-                    repo.topics = detail.topics
-                    repo.archived = detail.archived
-                    repo.fork = detail.fork
-                    repo.stars = detail.stars or repo.stars
-                    repo.description = repo.description or detail.description
+        details = self.gather_all(
+            [(r.full_name, lambda name=r.full_name: github.repo(name)) for r in missing], None
+        )
+        for repo, detail in zip(missing, details, strict=True):
+            if detail is not None:
+                repo.created_at = detail.created_at
+                repo.topics = detail.topics
+                repo.archived = detail.archived
+                repo.fork = detail.fork
+                repo.stars = detail.stars or repo.stars
+                repo.description = repo.description or detail.description
         return list(found.values())
 
     def _is_new(self, repo: Repo, now: datetime) -> bool:
@@ -184,15 +180,15 @@ class GithubTrends(Section):
     # ---- selecting ----
 
     def _attach_readmes(self, github: GitHub, repos: list[Repo]) -> None:
-        with ThreadPoolExecutor(_WORKERS) as pool:
-            readmes = pool.map(
-                lambda r: self.gather(
-                    f"{r.full_name} README", lambda: github.readme(r.full_name), ""
-                ),
-                repos,
-            )
-            for repo, readme in zip(repos, readmes, strict=True):
-                repo.readme = " ".join(readme.split())[:_README_CHARS]
+        readmes = self.gather_all(
+            [
+                (f"{r.full_name} README", lambda name=r.full_name: github.readme(name))
+                for r in repos
+            ],
+            "",
+        )
+        for repo, readme in zip(repos, readmes, strict=True):
+            repo.readme = " ".join(readme.split())[:_README_CHARS]
 
     def _select(self, repos: list[Repo], gained: dict[str, int]) -> RepoSelection:
         blocks = []

@@ -21,7 +21,6 @@ from airec.sections import register
 from airec.sections.base import Section, SectionError, SectionResult, Window
 from airec.sources import news
 from airec.sources.common import canonical_url
-from airec.sources.github import GitHub
 from airec.sources.news import Story
 
 _SUMMARY_CHARS = 450
@@ -109,38 +108,42 @@ class AiNews(Section):
     # ---- collecting ----
 
     def _collect(self, window: Window) -> list[Story]:
+        """Every source at once (a few at a time), in a fixed order so ranking ties are stable."""
         c = self.config
         since, until = window.since, window.until
         http = self.ctx.http
-        stories: list[Story] = []
+        jobs: list[tuple[str, Callable[[], list[Story]]]] = []
         for feed in c.feeds:
-            stories += self.gather(
-                f"feed {feed.name}",
-                lambda f=feed: news.read_feed(http, f.name, f.url, since, until, primary=f.primary),
-                [],
+            jobs.append(
+                (
+                    f"feed {feed.name}",
+                    lambda f=feed: news.read_feed(
+                        http, f.name, f.url, since, until, primary=f.primary
+                    ),
+                )
             )
-        if c.hn_queries:
-            stories += self.gather(
-                "Hacker News",
-                lambda: news.hacker_news(http, c.hn_queries, c.hn_min_points, since, until),
-                [],
+        for query in c.hn_queries:
+            jobs.append(
+                (
+                    f"Hacker News '{query}'",
+                    lambda q=query: news.hacker_news(http, [q], c.hn_min_points, since, until),
+                )
             )
         for subreddit in c.subreddits:
-            stories += self.gather(
-                f"r/{subreddit}",
-                lambda s=subreddit: news.reddit_top(http, s, c.reddit_limit, since, until),
-                [],
+            jobs.append(
+                (
+                    f"r/{subreddit}",
+                    lambda s=subreddit: news.reddit_top(http, s, c.reddit_limit, since, until),
+                )
             )
-        stories += self.gather(
-            "Hugging Face models",
-            lambda: news.new_hf_models(http, c.hf_min_likes, since, until),
-            [],
+        jobs.append(
+            ("Hugging Face models", lambda: news.new_hf_models(http, c.hf_min_likes, since, until))
         )
-        stories += self._web(window)
-        stories += self._releases(window)
-        return stories
+        jobs += self._web_jobs(window)
+        jobs += self._release_jobs(window)
+        return [story for found in self.gather_all(jobs, []) for story in found]
 
-    def _web(self, window: Window) -> list[Story]:
+    def _web_jobs(self, window: Window) -> list[tuple[str, Callable[[], list[Story]]]]:
         api_key = self.ctx.secrets.get("TAVILY_API_KEY")
         if not self.config.web_queries:
             return []
@@ -148,36 +151,33 @@ class AiNews(Section):
             self.warn("web search skipped: TAVILY_API_KEY is not set")
             return []
         days = max(1, math.ceil(window.days))
-        found: list[Story] = []
-        for query in self.config.web_queries:
-            found += self.gather(
-                f"web search '{query}'",
-                lambda q=query: news.web_search(
-                    self.ctx.http, api_key, q, days, self.config.web_results, window.until
-                ),
-                [],
-            )
-        return [story for story in found if story.url and window.contains(story.published_at)]
 
-    def _releases(self, window: Window) -> list[Story]:
-        github = GitHub(self.ctx.http, self.ctx.secrets.get("GITHUB_TOKEN"))
-        stories = []
-        for repo in self.config.watch_repos:
-            for release in self.gather(
-                f"releases of {repo}", lambda r=repo: github.releases(r), []
-            ):
-                if window.contains(release.published_at):
-                    stories.append(
-                        Story(
-                            title=f"{release.repo} {release.name}".strip(),
-                            url=release.url,
-                            summary=release.body[:800],
-                            source=release.repo,
-                            published_at=release.published_at,
-                            primary=True,
-                        )
-                    )
-        return stories
+        def search(query: str) -> list[Story]:
+            found = news.web_search(
+                self.ctx.http, api_key, query, days, self.config.web_results, window.until
+            )
+            return [story for story in found if story.url and window.contains(story.published_at)]
+
+        return [(f"web search '{q}'", lambda q=q: search(q)) for q in self.config.web_queries]
+
+    def _release_jobs(self, window: Window) -> list[tuple[str, Callable[[], list[Story]]]]:
+        github = self.ctx.github
+
+        def releases(repo: str) -> list[Story]:
+            return [
+                Story(
+                    title=f"{release.repo} {release.name}".strip(),
+                    url=release.url,
+                    summary=release.body[:800],
+                    source=release.repo,
+                    published_at=release.published_at,
+                    primary=True,
+                )
+                for release in github.releases(repo)
+                if window.contains(release.published_at)
+            ]
+
+        return [(f"releases of {r}", lambda r=r: releases(r)) for r in self.config.watch_repos]
 
     # ---- ranking ----
 
