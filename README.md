@@ -2,7 +2,7 @@
 
 **A weekly AI briefing that runs itself.**
 
-Once a week airec writes one Markdown report with three sections:
+airec (shown as AI Weekly in the hub; command `rec`) writes one Markdown report a week with three sections:
 
 | Section | What you get | How it stays small |
 |---|---|---|
@@ -39,7 +39,7 @@ report; with `brew install terminal-notifier`, clicking it opens the report, or 
 
 ## The app
 
-`rec serve` opens a small app for reading and steering. Inside [my-hub](#using-it-with-my-hub)
+`rec serve` serves a small app for reading and steering. Inside [my-hub](#using-it-with-my-hub)
 it looks like one of the hub's own pages and follows its style:
 
 - **Weeks:** every report, newest first, one row each: the date window, the first highlights,
@@ -99,7 +99,12 @@ rec run                         generate this week's report
     --section papers            draft one section
     --days 3                    draft the last N days
     --if-due                    run only if this week's report is owed (the scheduler uses this)
-rec direction add|list|test     manage paper directions
+rec direction add [TEXT]        add a direction (omit TEXT to write it in your editor)
+    --name NAME                 file name; derived from the plan's title if omitted
+rec direction list              your directions and their search plans
+rec direction test NAME         what a direction would catch, recording nothing
+    --days 14                   how far back to look
+rec cover [--week 2026-W45]     (re)draw the overview image for a report (default the latest)
 rec schedule install|uninstall  turn the weekly run on or off (macOS)
 rec serve [--port N]            the app
 rec open                        open the latest report
@@ -147,34 +152,37 @@ read. `report.reader` describes you, and tailors the news and repo sections.
 
 ## Using it with my-hub
 
-Register airec in the hub with a manifest whose app root is your airec home:
+The hub registers airec with the manifest in my-hub's `config/apps/airec.toml` (it lives in the hub,
+so this repo stays untouched; see that file for the full list of actions and the live run view). The
+app root is your airec home, not the code:
 
 ```toml
 path = "${HOME}/.airec"
-id = "airec"
+id   = "airec"
+name = "AI Weekly"
 
 [service]
-cmd = ["<repo>/.venv/bin/rec", "serve", "--port", "{port}"]
+cmd  = ["${HUB}/Apps/airec/.venv/bin/rec", "serve", "--port", "{port}"]
 port = "auto"
-open_in = "tab"
 
 [[outputs]]
-label = "Weekly report"
-glob = "reports/*.md"
-latest = "name"
+label   = "Weekly report"
+glob    = "reports/*.md"
+latest  = "name"
 primary = true
 
 [[widgets]]
-id = "this-week"
-title = "AI Weekly"
-kind = "list"
-file = "hub-card.json"
-size = "m"
+id        = "this-week"
+title     = "AI Weekly"
+kind      = "list"
+file      = "hub-card.json"
+placement = "results"
 ```
 
 Set `report.link` to `http://127.0.0.1:7777/#/app/airec/outputs/{path}` so notifications and
-`rec open` go to the hub. airec writes `hub-card.json` with each report, and the hub shows it on
-its home page.
+`rec open` go to the hub. airec writes `hub-card.json` with each report, and the hub shows its
+highlights in Latest results. The hub's Stop button sends SIGTERM; a run stops and is recorded as
+`cancelled`.
 
 ## Adding a section
 
@@ -225,7 +233,8 @@ src/airec/
   http.py       shared client with retries
   store.py      SQLite memory
   sections/     the plugins: base.py (contract), github_trends, ai_news, papers/
-  web/          the app: one FastAPI module (JSON API) and the built page in static/
+  web/          the app: the FastAPI JSON API (__init__.py), config.yaml editing (config_edit.py)
+                and the built page in static/
   sources/      outside services, knowing nothing about reports
   prompts/      every prompt as plain text
   defaults/     what `rec init` copies

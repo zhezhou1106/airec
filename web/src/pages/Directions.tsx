@@ -202,7 +202,7 @@ function DirectionCard({ direction: d }: { direction: Direction }) {
         </Button>
         {!editing && <Button size="sm" variant="ghost" onClick={() => setEditing(true)}><Pencil size={13} /> Edit</Button>}
         <span className="ml-auto" />
-        <ConfirmButton size="sm" variant="ghost" confirmLabel="Remove for good?" onConfirm={() => act(() => del(`/api/directions/${d.id}`), `Removed ${d.title}.`)}>
+        <ConfirmButton size="sm" variant="ghost" confirmLabel="Remove? It's kept in directions/.removed" onConfirm={() => act(() => del(`/api/directions/${d.id}`), `Removed ${d.title}.`)}>
           Remove
         </ConfirmButton>
       </div>

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS runs (
     week TEXT NOT NULL,
     started_at TEXT NOT NULL,
     finished_at TEXT,
-    status TEXT NOT NULL DEFAULT 'running',  -- running | ok | partial | failed
+    status TEXT NOT NULL DEFAULT 'running',  -- running | ok | partial | failed | cancelled
     report_path TEXT,
     total_tokens INTEGER NOT NULL DEFAULT 0
 );

@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
 import feedparser
@@ -69,7 +69,7 @@ def hacker_news(
     for query in queries:
         filters = (
             f"created_at_i>{int(since.timestamp())},created_at_i<{int(until.timestamp())},"
-            f"points>{min_points}"
+            f"points>={min_points}"
         )
         response = http.get(
             HN_API,
@@ -93,7 +93,9 @@ def hacker_news(
 def reddit_top(
     http: Http, subreddit: str, limit: int, since: datetime, until: datetime
 ) -> list[Story]:
-    response = http.get(f"https://www.reddit.com/r/{subreddit}/top/.rss", params={"t": "week"})
+    # Reddit's top list only offers fixed spans; a catch-up window needs the wider one.
+    span = "month" if until - since > timedelta(days=7) else "week"
+    response = http.get(f"https://www.reddit.com/r/{subreddit}/top/.rss", params={"t": span})
     stories = []
     for entry in feedparser.parse(response.content).entries[:limit]:
         published = from_struct(entry.get("published_parsed") or entry.get("updated_parsed"))

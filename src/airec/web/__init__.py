@@ -23,15 +23,19 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+import yaml
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from markdown_it import MarkdownIt
+from pydantic import ValidationError
+from ruamel.yaml.error import YAMLError as RuamelYAMLError
 
 from airec import __version__, pipeline, schedule
 from airec.config import ConfigError, Settings, load_settings
+from airec.llm import LlmError
 from airec.sections import available
-from airec.sections.base import Window
+from airec.sections.base import SectionError, Window
 from airec.sections.papers import Papers
 from airec.sections.papers.directions import (
     Direction,
@@ -289,6 +293,10 @@ def create_app(settings: Settings) -> FastAPI:
             changed = config_edit.save(settings.paths, part, values)
         except config_edit.Invalid as exc:
             return JSONResponse({"detail": str(exc), "errors": exc.errors}, status_code=422)
+        except (ValidationError, yaml.YAMLError, RuamelYAMLError) as exc:
+            # The file on disk is already invalid, so the current values cannot be read.
+            detail = f"{settings.paths.config} is invalid; fix it by hand first: {exc}"
+            raise HTTPException(422, detail) from None
         if changed:
             try:
                 settings = load_settings(settings.paths)
@@ -480,10 +488,13 @@ def appearance() -> dict[str, Any]:
 def run_preview(settings: Settings, direction: Direction) -> dict[str, Any]:
     now = datetime.now(UTC)
     window = Window(now - timedelta(days=_PREVIEW_DAYS), now)
-    with pipeline.database(settings.paths.db, scratch=True) as store:
-        ctx = pipeline.build_context(settings, store, pipeline.iso_week(now))
-        config = _papers_config(settings)
-        scan = Papers(ctx, config).scan(direction, window)
+    try:
+        with pipeline.database(settings.paths.db, scratch=True) as store:
+            ctx = pipeline.build_context(settings, store, pipeline.iso_week(now))
+            config = _papers_config(settings)
+            scan = Papers(ctx, config).scan(direction, window)
+    except (LlmError, SectionError, ConfigError) as exc:
+        raise HTTPException(502, str(exc)) from None
     return {
         "title": scan.plan.title,
         "phrases": scan.plan.phrases,

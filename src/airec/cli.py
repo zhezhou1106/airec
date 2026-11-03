@@ -12,8 +12,9 @@ import uvicorn
 
 from airec import pipeline, report, schedule
 from airec.config import ConfigError, Paths, Settings, init_home, load_settings
+from airec.llm import LlmError
 from airec.sections import build_sections
-from airec.sections.base import Context, Section, Window
+from airec.sections.base import Context, Section, SectionError, Window
 from airec.sections.papers import DirectionScan, Papers, compile_plan
 from airec.sections.papers.directions import load_directions, slugify
 from airec.store import Store
@@ -78,7 +79,13 @@ def run(
         )
     except pipeline.AlreadyRunning:
         typer.echo("Another run is in progress.")
-        return
+        raise typer.Exit(1) from None
+    except pipeline.Terminated:
+        typer.secho("Stopped (SIGTERM); the run is marked cancelled.", fg="yellow", err=True)
+        raise typer.Exit(143) from None
+    except KeyboardInterrupt:
+        typer.secho("Interrupted; the run is marked cancelled.", fg="yellow", err=True)
+        raise typer.Exit(130) from None
     except ConfigError as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(1) from None
@@ -120,9 +127,14 @@ def direction_add(
         typer.secho("Empty description; nothing added.", fg="yellow")
         raise typer.Exit(1)
     store = Store(":memory:")
-    ctx = pipeline.build_context(settings, store, pipeline.iso_week(datetime.now(UTC)))
-    plan = compile_plan(ctx, text.strip())
-    store.close()
+    try:
+        ctx = pipeline.build_context(settings, store, pipeline.iso_week(datetime.now(UTC)))
+        plan = compile_plan(ctx, text.strip())
+    except (LlmError, SectionError, ConfigError) as exc:
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(1) from None
+    finally:
+        store.close()
     target = settings.paths.directions / f"{slugify(name or plan.title)}.md"
     if target.exists():
         typer.secho(f"{target} already exists; use --name.", fg="red", err=True)
@@ -146,9 +158,14 @@ def direction_test(
         typer.secho(f"No direction '{direction_id}'. Have: {', '.join(found)}", fg="red", err=True)
         raise typer.Exit(1)
     now = datetime.now(UTC)
-    with pipeline.database(settings.paths.db, scratch=True) as store:
-        ctx = pipeline.build_context(settings, store, pipeline.iso_week(now))
-        scan = _papers(ctx).scan(found[direction_id], Window(now - timedelta(days=days), now))
+    try:
+        with pipeline.database(settings.paths.db, scratch=True) as store:
+            ctx = pipeline.build_context(settings, store, pipeline.iso_week(now))
+            window = Window(now - timedelta(days=days), now)
+            scan = _papers(ctx).scan(found[direction_id], window)
+    except (LlmError, SectionError, ConfigError) as exc:
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(1) from None
     _print_scan(scan)
 
 

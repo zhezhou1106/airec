@@ -11,7 +11,9 @@ import fcntl
 import json
 import logging
 import shutil
+import signal
 import tempfile
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -34,6 +36,28 @@ log = logging.getLogger(__name__)
 
 class AlreadyRunning(RuntimeError):
     pass
+
+
+class Terminated(KeyboardInterrupt):
+    """SIGTERM arrived (the hub's Stop button). A KeyboardInterrupt, so no section's
+    `except Exception` swallows it and the run unwinds like Ctrl-C."""
+
+
+@contextmanager
+def sigterm_raises() -> Iterator[None]:
+    """While inside, SIGTERM raises Terminated; the previous handler is restored after."""
+    if threading.current_thread() is not threading.main_thread():
+        yield  # signal handlers can only be set from the main thread
+        return
+
+    def _raise(signum: int, _frame: object) -> None:
+        raise Terminated(f"signal {signum}")
+
+    previous = signal.signal(signal.SIGTERM, _raise)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 @dataclass
@@ -204,7 +228,11 @@ def generate(
     paths.logs.mkdir(parents=True, exist_ok=True)
     trace = paths.logs / f"{week}.llm.jsonl"
 
-    with _exclusive(paths.lock), database(paths.db, scratch=dry_run) as store:
+    with (
+        sigterm_raises(),
+        _exclusive(paths.lock),
+        database(paths.db, scratch=dry_run) as store,
+    ):
         ctx = build_context(settings, store, week, transport=transport, llm=llm, trace_path=trace)
         sections = build_sections(ctx)
         if only:
@@ -215,24 +243,31 @@ def generate(
             raise ConfigError("No sections are enabled in config.yaml.")
 
         run_id = store.start_run(week)
-        outcomes = run_sections(sections, settings, store, week, now, days, resume=resume)
-        title = settings.app.report.title
-        markdown = report.render(title, week, now.astimezone(), outcomes, ctx.llm.usage)
-        folder = paths.drafts if dry_run else paths.reports
-        config = settings.app.report
-        if dry_run:
-            config = config.model_copy(update={"copy_to": None})
-        path = report.deliver(markdown, folder, week, config)
-        _commit(store, run_id, week, outcomes)
-        link = report.report_link(path, paths.home, config.link)
-        if not dry_run:
-            report.write_home_card(paths.home_card, week, outcomes, link)
+        try:
+            outcomes = run_sections(sections, settings, store, week, now, days, resume=resume)
+            title = settings.app.report.title
+            markdown = report.render(title, week, now.astimezone(), outcomes, ctx.llm.usage)
+            folder = paths.drafts if dry_run else paths.reports
+            config = settings.app.report
+            if dry_run:
+                config = config.model_copy(update={"copy_to": None})
+            path = report.deliver(markdown, folder, week, config)
+            _commit(store, run_id, week, outcomes)
+            link = report.report_link(path, paths.home, config.link)
+            if not dry_run:
+                report.write_home_card(paths.home_card, week, outcomes, link)
 
-        # A section that fell back to an earlier version still failed this time.
-        failures = sum(outcome.error is not None for outcome in outcomes)
-        empty = sum(not outcome.ok for outcome in outcomes)
-        status = "ok" if not failures else "failed" if empty == len(outcomes) else "partial"
-        store.finish_run(run_id, status, str(path), ctx.llm.usage.total_tokens)
+            # A section that fell back to an earlier version still failed this time.
+            failures = sum(outcome.error is not None for outcome in outcomes)
+            empty = sum(not outcome.ok for outcome in outcomes)
+            status = "ok" if not failures else "failed" if empty == len(outcomes) else "partial"
+            store.finish_run(run_id, status, str(path), ctx.llm.usage.total_tokens)
+        except KeyboardInterrupt:  # Ctrl-C, or SIGTERM from the hub's Stop button
+            store.finish_run(run_id, "cancelled", "", ctx.llm.usage.total_tokens)
+            raise
+        except BaseException:
+            store.finish_run(run_id, "failed", "", ctx.llm.usage.total_tokens)
+            raise
 
         # The text is delivered and recorded; the cover only decorates it.
         cover_state = None

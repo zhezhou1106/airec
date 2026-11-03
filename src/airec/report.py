@@ -67,7 +67,7 @@ def render(
         if outcome.result:
             lines.append(outcome.result.markdown.strip())
         else:
-            lines.append(f"*This section failed and will be retried: {outcome.error}*")
+            lines.append(f"*This section failed and will be retried next run: {outcome.error}*")
         lines.append("")
     lines += _run_notes(outcomes, usage)
     return "\n".join(lines).rstrip() + "\n"
