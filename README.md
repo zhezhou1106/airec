@@ -220,7 +220,9 @@ class Podcasts(Section):
 
 Then add a `podcasts:` block to `config.yaml`; its position there is its position in the report.
 The section gets the run's services through `self.ctx`: `llm`, `http`, `store` and `secrets`. It can
-keep small documents with `store.get_state` and `set_state`, or declare tables in `schema`. Windows,
+keep small documents with `store.get_state` and `set_state`, or declare tables in `schema`; state
+for later weeks goes in a `commit` callable on the `SectionResult`, which the pipeline calls only
+once the report is written (never for a draft or a failed run). Windows,
 failure handling, retries and recording `shown` come from the pipeline; the section filters
 against `shown_before` itself, because what counts as a repeat differs by section.
 

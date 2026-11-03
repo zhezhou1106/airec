@@ -72,6 +72,9 @@ class SectionResult:
     highlights: list[str] = field(default_factory=list)  # bullets for "At a glance"
     shown: list[str] = field(default_factory=list)  # ids not to repeat next week
     stats: dict[str, Any] = field(default_factory=dict)
+    # State to keep for later weeks (seen headlines, seeds, snapshots). The pipeline calls it
+    # once the report is written, so a run that fails or is a draft remembers nothing.
+    commit: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass

@@ -154,7 +154,11 @@ class Papers(Section):
             if top:
                 highlights.append(top)
             shown += [item.paper.id for item in scan.accepted] + scan.rejected
-            self._remember_seeds(scan)
+
+        def commit() -> None:
+            for scan in scans:
+                self._remember_seeds(scan)
+
         return SectionResult(
             markdown="\n\n".join(blocks),
             highlights=highlights,
@@ -165,6 +169,7 @@ class Papers(Section):
                 "relevant": sum(scan.relevant for scan in scans),
                 "shown": sum(len(scan.accepted) for scan in scans),
             },
+            commit=commit,
         )
 
     def checks(self) -> list[tuple[str, Callable[[], str]]]:

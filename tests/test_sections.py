@@ -280,6 +280,8 @@ def test_papers_flow_from_description_to_report(make_context, web, settings, sto
     assert "Off topic" not in result.markdown
     assert "*3 new candidates, 2 relevant, 2 passed the quality gate.*" in result.markdown
     assert sorted(result.shown) == ["arxiv:2610.00001", "arxiv:2610.00002"]
+    assert store.get_state("papers", "seeds:ttt") is None  # kept only once the report is written
+    result.commit()
     assert store.get_state("papers", "seeds:ttt") == ["ArXiv:2610.00001", "ArXiv:2610.00002"]
 
 
@@ -697,3 +699,33 @@ def test_daily_papers_fetch_days_concurrently_in_order(web):
     expected = [(NOW - timedelta(days=9 - n)).date().isoformat() for n in range(10)]
     assert [paper.title for paper in papers] == expected
     assert 1 < slow.peak <= 6
+
+
+# ---- state waits for the report ----
+
+
+def test_news_remembers_headlines_only_on_commit(make_context, web, store):
+    web.route("lab.dev/feed", rss(("Model X", "https://lab.dev/x")))
+    web.route("api/models", [])
+    reply = {
+        "stories": [
+            {"category": "Model releases", "headline": "X ships", "summary": ".", "sources": ["s1"]}
+        ]
+    }
+    feeds = [{"name": "Lab", "url": "https://lab.dev/feed"}]
+    result = news_section(make_context, lambda *_: reply, feeds=feeds).run(WINDOW)
+    assert store.get_state("ai_news", "recent_headlines") is None
+    result.commit()
+    assert store.get_state("ai_news", "recent_headlines") == [
+        {"week": "2026-W45", "headline": "X ships"}
+    ]
+
+
+def test_trends_save_star_snapshots_only_on_commit(make_context, web, store):
+    web.route("github.com/trending", trending_page(("b/fast", 900)))
+    web.route("/repos/b/fast", repo_json("b/fast"))
+    result = trends(make_context, lambda *_: {"picks": []}).run(WINDOW)
+    count = "SELECT COUNT(*) FROM repo_stars"
+    assert store.db.execute(count).fetchone()[0] == 0
+    result.commit()
+    assert store.db.execute(count).fetchone()[0] == 1

@@ -88,7 +88,6 @@ class AiNews(Section):
                 raise SectionError("the editor cited no real candidate")
             return SectionResult("A quiet week: nothing notable made the cut.", stats=stats)
 
-        self._remember(briefs)
         cited = [labels[s] for brief in briefs for s in brief.sources if s in labels]
         important = [brief for brief in briefs if brief.importance == "high"] or briefs
         return SectionResult(
@@ -96,6 +95,7 @@ class AiNews(Section):
             highlights=[f"{brief.headline}" for brief in important[:3]],
             shown=[story.id for story in cited],
             stats={**stats, "stories": len(briefs)},
+            commit=lambda: self._remember(briefs),
         )
 
     def checks(self) -> list[tuple[str, Callable[[], str]]]:

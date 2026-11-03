@@ -188,6 +188,8 @@ def _commit(store: Store, run_id: int, week: str, outcomes: list[report.SectionO
             outcome.error,
         )
         if result:
+            if result.commit:
+                result.commit()
             store.replace_shown(outcome.key, result.shown, week)
             store.set_state(
                 outcome.key,

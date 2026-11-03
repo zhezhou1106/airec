@@ -36,7 +36,11 @@ class Probe(Section):
         if isinstance(next_outcome, Exception):
             raise next_outcome
         return SectionResult(
-            f"{self.config.label} body", highlights=["probe highlight"], shown=["x"], stats={"n": 1}
+            f"{self.config.label} body",
+            highlights=["probe highlight"],
+            shown=["x"],
+            stats={"n": 1},
+            commit=lambda: self.ctx.store.set_state(self.key, "memory", window.label),
         )
 
 
@@ -457,3 +461,53 @@ def test_a_failed_cover_never_fails_the_report(probe_settings, web, tmp_path):
 def test_drafts_get_no_cover(probe_settings, web, tmp_path):
     settings = _with_cover(probe_settings, tmp_path, f"cp {tmp_path}/image.png overview.png")
     assert generate(settings, web, dry_run=True).cover is None
+
+
+def memory(settings, key="probe"):
+    if not settings.paths.db.exists():
+        return None
+    store = Store(settings.paths.db)
+    try:
+        return store.get_state(key, "memory")
+    finally:
+        store.close()
+
+
+def test_section_state_is_kept_once_the_report_is_written(probe_settings, web):
+    generate(probe_settings, web)
+    assert memory(probe_settings) and memory(probe_settings, "steady")
+
+
+def test_section_state_is_dropped_when_the_report_is_not_written(probe_settings, web, monkeypatch):
+    def crash(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("airec.report.deliver", crash)
+    with pytest.raises(OSError):
+        generate(probe_settings, web)
+    assert memory(probe_settings) is None and memory(probe_settings, "steady") is None
+
+
+def test_a_section_failing_after_run_keeps_no_state(probe_settings, web):
+    original = Probe.run
+
+    def bad(self, window):
+        result = original(self, window)
+        result.shown = [1]  # not recordable: the section fails after run() returned
+        return result
+
+    Steady.run = original
+    Probe.run = bad
+    try:
+        result = generate(probe_settings, web)
+    finally:
+        Probe.run = original
+        del Steady.run
+    assert result.status == "partial"
+    assert memory(probe_settings) is None
+    assert memory(probe_settings, "steady")
+
+
+def test_dry_run_keeps_no_section_state(probe_settings, web):
+    generate(probe_settings, web, dry_run=True)
+    assert memory(probe_settings) is None

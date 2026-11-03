@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 from pydantic import BaseModel, Field
 
@@ -66,13 +67,13 @@ class GithubTrends(Section):
         self.require_sources()
         fresh = [repo for repo in repos if self._is_new(repo, now)]
         gained = {repo.id: self._momentum(repo, now) for repo in fresh}
-        self._save_snapshots(fresh, now)
+        commit = partial(self._save_snapshots, fresh, now)
         candidates = self._drop_recently_shown(fresh, now)
         candidates.sort(key=lambda repo: gained[repo.id], reverse=True)
         candidates = candidates[: self.config.max_candidates]
         stats = {"seen": len(repos), "new": len(fresh), "candidates": len(candidates)}
         if not candidates:
-            return SectionResult("No new repo stood out this week.", stats=stats)
+            return SectionResult("No new repo stood out this week.", stats=stats, commit=commit)
 
         self._attach_readmes(github, candidates)
         selection = self._select(candidates, gained)
@@ -82,7 +83,7 @@ class GithubTrends(Section):
         if not picks:
             if selection.picks:
                 raise SectionError("the model picked no real candidate")
-            return SectionResult("No new AI repo stood out this week.", stats=stats)
+            return SectionResult("No new AI repo stood out this week.", stats=stats, commit=commit)
         lines = [selection.trend.strip(), ""] if selection.trend.strip() else []
         lines += [_bullet(pick, by_name[pick.repo.lower()], gained, now) for pick in picks]
         top = picks[0]
@@ -93,6 +94,7 @@ class GithubTrends(Section):
             ],
             shown=[by_name[pick.repo.lower()].id for pick in picks],
             stats={**stats, "shown": len(picks)},
+            commit=commit,
         )
 
     def checks(self) -> list[tuple[str, Callable[[], str]]]:
