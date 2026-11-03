@@ -139,12 +139,8 @@ class Papers(Section):
             return SectionResult(
                 "No directions yet. Describe one with `rec direction add`.", stats={"directions": 0}
             )
-        widened = Window(window.since - timedelta(days=self.config.lookback_days), window.until)
-        daily = self.gather(
-            "Hugging Face daily papers",
-            lambda: hf_daily_papers(self.ctx.http, widened.since, widened.until),
-            [],
-        )
+        widened = self._widen(window)
+        daily = self._daily(widened)
         scans = [self.scan(direction, widened, daily) for direction in directions]
         self.require_sources()
         _assign_to_best_direction(scans)
@@ -179,6 +175,23 @@ class Papers(Section):
         return [("paper directions", directions)]
 
     # ---- one direction ----
+
+    def preview(self, direction: Direction, window: Window) -> DirectionScan:
+        """What a run over `window` would find for one direction: the same widened window
+        and the same sources, Hugging Face daily papers included. Writes only caches."""
+        widened = self._widen(window)
+        return self.scan(direction, widened, self._daily(widened))
+
+    def _widen(self, window: Window) -> Window:
+        """Indexes lag, so look a few days further back; judged papers stay cached."""
+        return Window(window.since - timedelta(days=self.config.lookback_days), window.until)
+
+    def _daily(self, window: Window) -> list[Paper]:
+        return self.gather(
+            "Hugging Face daily papers",
+            lambda: hf_daily_papers(self.ctx.http, window.since, window.until),
+            [],
+        )
 
     def scan(
         self, direction: Direction, window: Window, daily: list[Paper] | None = None

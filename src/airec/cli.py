@@ -162,7 +162,7 @@ def direction_test(
         with pipeline.database(settings.paths.db, scratch=True) as store:
             ctx = pipeline.build_context(settings, store, pipeline.iso_week(now))
             window = Window(now - timedelta(days=days), now)
-            scan = _papers(ctx).scan(found[direction_id], window)
+            scan = _papers(ctx).preview(found[direction_id], window)
     except (LlmError, SectionError, ConfigError) as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(1) from None

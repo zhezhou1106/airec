@@ -492,7 +492,7 @@ def run_preview(settings: Settings, direction: Direction) -> dict[str, Any]:
         with pipeline.database(settings.paths.db, scratch=True) as store:
             ctx = pipeline.build_context(settings, store, pipeline.iso_week(now))
             config = _papers_config(settings)
-            scan = Papers(ctx, config).scan(direction, window)
+            scan = Papers(ctx, config).preview(direction, window)
     except (LlmError, SectionError, ConfigError) as exc:
         raise HTTPException(502, str(exc)) from None
     return {

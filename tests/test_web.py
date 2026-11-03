@@ -407,3 +407,27 @@ def test_schedule_save_updates_the_header_text(client, commented):
     reply = put_config(client, "schedule", {**schedule, "weekday": 5, "hour": 7})
     assert reply.json()["config"]["schedule_text"] == "Every Friday from 7:00"
     assert client.get("/api/overview").json()["schedule"] == "Every Friday from 7:00"
+
+
+def test_preview_and_cli_test_use_the_run_path(settings, monkeypatch):
+    """Both previews go through Papers.preview, which searches exactly like a run."""
+    from typer.testing import CliRunner
+
+    from airec import cli
+    from airec.sections.papers import DirectionScan, Papers, SearchPlan
+
+    (settings.paths.directions / "ttt.md").write_text("Test-time training for LLMs.")
+    [direction] = load_directions(settings.paths.directions)
+    calls = []
+
+    def preview(self, d, window):
+        calls.append((d.id, round(window.days)))
+        plan = SearchPlan(title="T", phrases=["a b", "c d", "e f"])
+        return DirectionScan(d, plan, 0, 0, [], [])
+
+    monkeypatch.setattr(Papers, "preview", preview)
+    assert web.run_preview(settings, direction)["title"] == "T"
+    monkeypatch.setenv("AIREC_HOME", str(settings.paths.home))
+    result = CliRunner().invoke(cli.app, ["direction", "test", "ttt", "--days", "5"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("ttt", 14), ("ttt", 5)]

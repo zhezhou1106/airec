@@ -600,3 +600,29 @@ def test_direction_files(tmp_path):
         Direction("a", "one  two\nthree").fingerprint == Direction("a", "one two three").fingerprint
     )
     assert slugify("Test-Time Training: Agents!") == "test-time-training-agents"
+
+
+def test_preview_searches_like_a_run_with_daily_papers_and_lookback(make_context, web, settings):
+    add_direction(settings)
+    route_papers(web, ("2610.00001", "From arXiv"))
+    only_daily = {
+        "paper": {
+            "id": "2610.00002",
+            "title": "Online adaptation of agents",
+            "summary": "x",
+            "publishedAt": "2026-10-30T00:00:00Z",
+        }
+    }
+    web.route(
+        "daily_papers",
+        lambda r: httpx.Response(200, json=[only_daily] if "2026-10-30" in str(r.url) else []),
+    )
+    section = papers_section(make_context, paper_answers({"Online adaptation of agents": 9}))
+    [direction] = load_directions(settings.paths.directions)
+    scan = section.preview(direction, WINDOW)
+    assert [item.paper.title for item in scan.accepted] == ["Online adaptation of agents"]
+    days = [r.url.params["date"] for r in web.requests if "daily_papers" in str(r.url)]
+    widened = WINDOW.since - timedelta(days=section.config.lookback_days)
+    assert min(days) == widened.date().isoformat()
+    arxiv = next(r for r in web.requests if "export.arxiv.org" in str(r.url))
+    assert f"submittedDate:[{widened:%Y%m%d%H%M}" in arxiv.url.params["search_query"]
