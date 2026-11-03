@@ -12,109 +12,51 @@ A direction is a text file. Everything else is derived from it:
               at most `max_papers`, possibly none
     brief     a writer condenses the survivors into a pulse and short takeaways
 
+Retrieval lives here; judge, gate and brief in `screen`; the report text in `render`.
+
 Nothing here reads full papers or sweeps whole arXiv categories.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 from datetime import timedelta
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from airec import prompts
 from airec.config import Strict
-from airec.llm import LlmError
 from airec.sections import register
 from airec.sections.base import Section, SectionError, SectionResult, Window
+from airec.sections.papers import render, screen
 from airec.sections.papers.directions import Direction, load_directions
 from airec.sections.papers.plan import SearchPlan, compile_plan, load_or_compile_plan
+from airec.sections.papers.screen import (
+    DEFAULT_QUALITY_RULES,
+    DirectionBrief,
+    DirectionScan,
+    Scored,
+)
 from airec.sources.papers import Arxiv, Paper, SemanticScholar, hf_daily_papers
 
-__all__ = ["DirectionScan", "Papers", "SearchPlan", "compile_plan"]
+__all__ = [
+    "DEFAULT_QUALITY_RULES",
+    "DirectionBrief",
+    "DirectionScan",
+    "Papers",
+    "Scored",
+    "SearchPlan",
+    "compile_plan",
+]
 
 _PHRASES_PER_QUERY = 6
-_ABSTRACT_CHARS = 1100
-_WORKERS = 4
-_MAX_FAILED_BATCHES = 4  # one in this many may fail before the section does
 _SCORE_TIE = 1.0  # scores this close are a tie between directions
-DEFAULT_QUALITY_RULES = [
-    "It reports a concrete new method, mechanism, dataset or finding. Surveys, position papers, "
-    "proposals and system descriptions without evaluation fail.",
-    "The abstract shows real evidence: experiments, a proof, or a controlled comparison, with "
-    "named baselines or concrete results. Vague claims of improvement fail.",
-    "The contribution is the idea, not the application: a known method applied to one domain "
-    "fails.",
-    "It adds something new. A small tweak of a known method with a minor benchmark gain fails.",
-    "When two papers are otherwise equal, prefer released code, then the more careful evaluation.",
-]
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS paper_verdicts (
-    direction TEXT NOT NULL,
-    fingerprint TEXT NOT NULL,
-    paper_id TEXT NOT NULL,
-    score REAL NOT NULL,
-    reason TEXT NOT NULL,
-    PRIMARY KEY (direction, fingerprint, paper_id)
-);
-"""
-
-
-class Verdict(BaseModel):
-    id: str
-    score: float = Field(ge=0, le=10)
-    reason: str = ""
-
-
-class Verdicts(BaseModel):
-    verdicts: list[Verdict]
-
-
-class GateDecision(BaseModel):
-    id: str
-    keep: bool
-    reason: str = ""
-
-
-class GateResult(BaseModel):
-    decisions: list[GateDecision]
-
-
-class Takeaway(BaseModel):
-    id: str
-    takeaway: str
-
-
-class DirectionBrief(BaseModel):
-    pulse: str = ""
-    papers: list[Takeaway] = Field(default_factory=list)
-
-
-@dataclass
-class Scored:
-    paper: Paper
-    score: float
-    reason: str
-    also_in: list[str] = field(default_factory=list)
-
-
-@dataclass
-class DirectionScan:
-    direction: Direction
-    plan: SearchPlan
-    candidates: int
-    relevant: int  # past the relevance screen
-    accepted: list[Scored]  # past the quality gate
-    rejected: list[str]  # ids the gate turned down; not worth offering again
 
 
 @register
 class Papers(Section):
     key = "papers"
     title = "Papers on your directions"
-    schema = _SCHEMA
+    schema = screen.SCHEMA
 
     class Config(Strict):
         min_score: float = Field(default=8.0, ge=0, le=10)  # relevance needed to reach the gate
@@ -213,41 +155,12 @@ class Papers(Section):
                 f"{self.config.max_candidates}; its description may be too broad"
             )
             papers = papers[: self.config.max_candidates]
-        scored = self._judge(direction, plan, papers)
+        scored = screen.judge(self, direction, plan, papers)
         relevant = [item for item in scored if item.score >= self.config.min_score]
         relevant.sort(key=lambda item: (item.score, item.paper.upvotes), reverse=True)
         shortlist = relevant[: self.config.max_shortlist]
-        kept, rejected = self._gate(direction, shortlist)
+        kept, rejected = screen.gate(self, direction, shortlist)
         return DirectionScan(direction, plan, len(papers), len(relevant), kept, rejected)
-
-    def _gate(
-        self, direction: Direction, shortlist: list[Scored]
-    ) -> tuple[list[Scored], list[str]]:
-        """Apply the quality rules. If this cannot run, the section fails: never pass unchecked."""
-        if not shortlist:
-            return [], []
-        labels = {f"p{number}": item for number, item in enumerate(shortlist, 1)}
-        rules = "\n".join(f"{n}. {rule}" for n, rule in enumerate(self.config.quality_rules, 1))
-        system = prompts.render(
-            "paper_gate",
-            description=direction.description,
-            rules=rules,
-            max_papers=self.config.max_papers,
-        )
-        user = "\n\n".join(
-            f"{label}: {item.paper.title}\n{_evidence(item.paper)}\n"
-            f"{item.paper.abstract[:_ABSTRACT_CHARS]}"
-            for label, item in labels.items()
-        )
-        result = self.ctx.llm.json("writer", system, user, GateResult)
-        kept = []
-        for decision in result.decisions:
-            item = labels.get(decision.id)
-            if decision.keep and item is not None and item not in kept:
-                item.reason = decision.reason.strip() or item.reason
-                kept.append(item)
-        kept = kept[: self.config.max_papers]
-        return kept, [item.paper.id for item in shortlist if item not in kept]
 
     def _retrieve(
         self, direction: Direction, plan: SearchPlan, window: Window, daily: list[Paper]
@@ -311,86 +224,12 @@ class Papers(Section):
                 self.warn(f"recommendations for {direction.id} failed: {str(exc)[:120]}")
         return papers
 
-    def _judge(self, direction: Direction, plan: SearchPlan, papers: list[Paper]) -> list[Scored]:
-        cached = {
-            row["paper_id"]: (row["score"], row["reason"])
-            for row in self.ctx.store.db.execute(
-                "SELECT paper_id, score, reason FROM paper_verdicts "
-                "WHERE direction = ? AND fingerprint = ?",
-                (direction.id, direction.fingerprint),
-            )
-        }
-        pending = [paper for paper in papers if paper.id not in cached]
-        size = self.config.judge_batch
-        batches = [pending[start : start + size] for start in range(0, len(pending), size)]
-        system = prompts.render(
-            "paper_judge", description=direction.description, criteria=plan.criteria_text()
-        )
-
-        def judge(batch: list[Paper]) -> list[Verdict] | None:
-            """The batch's verdicts, or None when the model failed (counted after the map)."""
-            labels = {f"p{number}": paper for number, paper in enumerate(batch, 1)}
-            user = "\n\n".join(
-                f"{label}: {paper.title}\n{paper.abstract[:_ABSTRACT_CHARS]}"
-                for label, paper in labels.items()
-            )
-            try:
-                reply = self.ctx.llm.json("fast", system, user, Verdicts)
-            except LlmError as exc:
-                self.warn(f"judging for {direction.id} failed: {str(exc)[:160]}")
-                return None
-            return [
-                Verdict(id=labels[v.id].id, score=v.score, reason=v.reason)
-                for v in reply.verdicts
-                if v.id in labels
-            ]
-
-        with ThreadPoolExecutor(_WORKERS) as pool:
-            replies = list(pool.map(judge, batches))
-        failed = sum(reply is None for reply in replies)
-        new = [verdict for reply in replies if reply for verdict in reply]
-        if failed * _MAX_FAILED_BATCHES > len(batches):
-            # Unjudged papers would leave the window for good, so this week must be retried.
-            raise SectionError(f"{failed} of {len(batches)} judge batches failed: {direction.id}")
-        if len(new) < sum(len(batch) for batch in batches) - failed * size:
-            self.warn(f"{direction.id}: the judge skipped some papers")
-        self.ctx.store.executemany(
-            "INSERT OR REPLACE INTO paper_verdicts VALUES (?, ?, ?, ?, ?)",
-            [(direction.id, direction.fingerprint, v.id, v.score, v.reason) for v in new],
-        )
-        cached.update({v.id: (v.score, v.reason) for v in new})
-        return [Scored(paper, *cached[paper.id]) for paper in papers if paper.id in cached]
-
     # ---- writing ----
 
     def _brief(self, scan: DirectionScan) -> tuple[str, str | None]:
         """A direction's block, and its top paper for the summary."""
-        heading = f"### {scan.plan.title}"
-        funnel = (
-            f"*{scan.candidates} new candidates, {scan.relevant} relevant, "
-            f"{len(scan.accepted)} passed the quality gate.*"
-        )
-        if not scan.accepted:
-            return f"{heading}\n\nNothing passed the quality gate this week. {funnel}", None
-        labels = {f"p{number}": item for number, item in enumerate(scan.accepted, 1)}
-        system = prompts.render("paper_brief", description=scan.direction.description)
-        user = "\n\n".join(
-            f"{label}: {item.paper.title}\nWhy relevant: {item.reason}\n"
-            f"{item.paper.abstract[:_ABSTRACT_CHARS]}"
-            for label, item in labels.items()
-        )
-        brief = self.ctx.llm.json("writer", system, user, DirectionBrief)
-        takeaways = {t.id: t.takeaway for t in brief.papers}
-
-        lines = [heading, ""]
-        if brief.pulse.strip():
-            lines += [brief.pulse.strip(), ""]
-        for label, item in labels.items():
-            lines.append(_paper_line(item, takeaways.get(label) or item.reason))
-        lines += ["", funnel]
-        top = scan.accepted[0]
-        highlight = f"{scan.plan.title}: [{top.paper.title}]({top.paper.url})"
-        return "\n".join(lines), highlight
+        written = screen.brief(self, scan) if scan.accepted else None
+        return render.direction_block(scan, written)
 
     def _remember_seeds(self, scan: DirectionScan) -> None:
         """Accepted arXiv papers steer next week's recommendations."""
@@ -423,32 +262,3 @@ def _assign_to_best_direction(scans: list[DirectionScan]) -> None:
                 item.also_in = [s.plan.title for _, s in rivals if s is not scan]
                 kept.append(item)
         scan.accepted = kept
-
-
-def _signals(item: Scored) -> str:
-    paper = item.paper
-    parts = [f"{item.score:.0f}/10"]
-    if paper.venue:
-        parts.append(paper.venue)
-    if paper.upvotes:
-        parts.append(f"▲{paper.upvotes}")
-    if paper.code_url:
-        parts.append(f"[code]({paper.code_url})")
-    if item.also_in:
-        parts.append(f"also: {', '.join(item.also_in)}")
-    return " · ".join(parts)
-
-
-def _evidence(paper: Paper) -> str:
-    facts = []
-    if paper.venue:
-        facts.append(f"venue: {paper.venue}")
-    if paper.upvotes:
-        facts.append(f"community upvotes: {paper.upvotes}")
-    facts.append("code released" if paper.code_url else "no code link")
-    return "; ".join(facts)
-
-
-def _paper_line(item: Scored, takeaway: str) -> str:
-    paper = item.paper
-    return f"- **[{paper.title}]({paper.url})** ({_signals(item)})  \n  {takeaway.strip()}"

@@ -238,9 +238,10 @@ src/airec/
   llm.py        role-based OpenAI-compatible client, validated JSON replies
   http.py       shared client with retries
   store.py      SQLite memory
-  sections/     the plugins: base.py (contract), github_trends, ai_news, papers/
-  web/          the app: the FastAPI JSON API (__init__.py), config.yaml editing (config_edit.py)
-                and the built page in static/
+  sections/     the plugins: base.py (contract), github_trends, ai_news, papers/ (retrieval in
+                __init__.py, judge/gate/brief in screen.py, report text in render.py)
+  web/          the app: the FastAPI routes (__init__.py), reading reports (reports.py), calls to
+                the hub (hub.py), config.yaml editing (config_edit.py) and the built page in static/
   sources/      outside services, knowing nothing about reports
   prompts/      every prompt as plain text
   defaults/     what `rec init` copies
